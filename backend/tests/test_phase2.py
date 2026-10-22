@@ -1,0 +1,288 @@
+"""Testes da Fase 2 (SQLite em memória — lógica, não bloqueios PostgreSQL).
+
+PENDENTE no PostgreSQL: concorrência (FOR UPDATE), índice parcial único,
+migração real. Marcados com pytest.mark.postgres_pending.
+"""
+
+import uuid
+from datetime import UTC, date, datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy.orm import sessionmaker
+
+from app.models.cycle import CyclePhase, WeeklyCycle
+from app.models.location import Location
+from app.models.phase2 import Enrollment, EnrollmentStatus, WeeklyAvailability
+from app.models.session_week import ReikiSession, SessionStatus
+from app.models.user import Role, User
+from app.services import phase2_service
+
+WS = date(2026, 10, 26)  # segunda-feira
+
+pytestmark_postgres = pytest.mark.postgres_pending
+
+
+def _setup_cycle(db, phase=CyclePhase.COLLECTING_AVAILABILITY):
+    return WeeklyCycle(week_start=WS, phase=phase)
+
+
+def _make_instructor(db, n=1) -> User:
+    u = User(
+        name=f"Instrutor {n}",
+        email=f"instrutor{n}@x.local",
+        password_hash="x",
+        role=Role.INSTRUCTOR,
+    )
+    db.add(u)
+    return u
+
+
+def _entries(days=2):
+    base = datetime(2026, 10, 26, 14, 0, tzinfo=timezone.utc)
+    return [
+        {
+            "kind": "available",
+            "starts_at": base + timedelta(days=i),
+            "ends_at": base + timedelta(days=i, hours=1),
+            "location_id": None,
+            "note": None,
+        }
+        for i in range(days)
+    ]
+
+
+# ------------------------- Disponibilidade -------------------------
+
+
+def test_submit_availability(db) -> None:
+    db.add(_setup_cycle(db))
+    instr = _make_instructor(db)
+    db.commit()
+    sub = phase2_service.submit_availability(
+        db, instr, WS, unavailable=False, entries=_entries()
+    )
+    assert sub.status.value == "submitted"
+    assert len(sub.entries) == 2
+    # Upsert: submeter de novo atualiza em vez de duplicar.
+    sub2 = phase2_service.submit_availability(
+        db, instr, WS, unavailable=False, entries=_entries(1)
+    )
+    assert sub2.id == sub.id
+    assert len(sub2.entries) == 1
+
+
+def test_declare_unavailable(db) -> None:
+    db.add(_setup_cycle(db))
+    instr = _make_instructor(db)
+    db.commit()
+    sub = phase2_service.submit_availability(
+        db, instr, WS, unavailable=True, entries=[]
+    )
+    assert sub.status.value == "unavailable"
+    assert sub.entries == []
+
+
+def test_duplicate_submission_same_week_upserts(db) -> None:
+    db.add(_setup_cycle(db))
+    instr = _make_instructor(db)
+    db.commit()
+    phase2_service.submit_availability(db, instr, WS, unavailable=False, entries=_entries())
+    phase2_service.submit_availability(db, instr, WS, unavailable=True, entries=[])
+    rows = db.query(WeeklyAvailability).all()
+    assert len(rows) == 1
+    assert rows[0].status.value == "unavailable"
+
+
+def test_invalid_entries_rejected(db) -> None:
+    db.add(_setup_cycle(db))
+    instr = _make_instructor(db)
+    db.commit()
+    with pytest.raises(phase2_service.AvailabilityError):
+        phase2_service.submit_availability(
+            db, instr, WS, unavailable=False, entries=[]
+        )
+    bad = [
+        {
+            "kind": "available",
+            "starts_at": datetime(2026, 10, 26, 15, 0, tzinfo=timezone.utc),
+            "ends_at": datetime(2026, 10, 26, 14, 0, tzinfo=timezone.utc),
+            "location_id": None,
+            "note": None,
+        }
+    ]
+    with pytest.raises(phase2_service.AvailabilityError):
+        phase2_service.submit_availability(db, instr, WS, unavailable=False, entries=bad)
+
+
+def test_agenda_requires_all_instructors(db) -> None:
+    cycle = _setup_cycle(db)
+    db.add(cycle)
+    i1 = _make_instructor(db, 1)
+    i2 = _make_instructor(db, 2)
+    db.commit()
+    phase2_service.submit_availability(db, i1, WS, unavailable=False, entries=_entries())
+    assert not phase2_service.all_instructors_submitted(db, cycle)
+    phase2_service.submit_availability(db, i2, WS, unavailable=True, entries=[])
+    assert phase2_service.all_instructors_submitted(db, cycle)
+    phase2_service.publish_week(db, WS)
+    db.refresh(cycle)
+    assert cycle.phase == CyclePhase.ENROLLMENT_PENDING
+    # Idempotente: publicar de novo não muda de fase de novo.
+    cycle2 = phase2_service.publish_week(db, WS)
+    assert cycle2.phase == CyclePhase.ENROLLMENT_PENDING
+
+
+def test_publish_requires_capacity_set(db) -> None:
+    """Publicação da agenda não exige capacidade; inscrição confirmada, sim."""
+    cycle = _setup_cycle(db)
+    db.add(cycle)
+    i1 = _make_instructor(db, 1)
+    db.commit()
+    phase2_service.submit_availability(db, i1, WS, unavailable=True, entries=[])
+    phase2_service.publish_week(db, WS)  # publica sem erro mesmo sem sessões
+
+
+def test_availability_locked_after_phase(db) -> None:
+    db.add(_setup_cycle(db, phase=CyclePhase.ENROLLMENT_OPEN))
+    instr = _make_instructor(db)
+    db.commit()
+    with pytest.raises(phase2_service.AvailabilityError) as exc:
+        phase2_service.submit_availability(
+            db, instr, WS, unavailable=True, entries=[]
+        )
+    assert exc.value.code == "locked"
+
+
+def test_pending_is_not_unavailable(db) -> None:
+    """Ausência de submissão ≠ indisponibilidade."""
+    db.add(_setup_cycle(db))
+    instr = _make_instructor(db)
+    db.commit()
+    sub = phase2_service.get_availability(db, instr.id, WS)
+    assert sub is None  # pending é derivado, não registro
+
+
+# --------------------------- Inscrições ---------------------------
+
+
+def _make_session(db, loc=None, capacity=2, status=SessionStatus.OPEN, phase=CyclePhase.ENROLLMENT_OPEN):
+    if loc is None:
+        loc = Location(name=f"Sala {uuid.uuid4().hex[:6]}")
+        db.add(loc)
+    db.add(_setup_cycle(db, phase))
+    db.flush()  # garante ids para as FKs
+    s = ReikiSession(
+        location_id=loc.id,
+        starts_at=datetime(2026, 10, 28, 14, 0, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc),
+        capacity=capacity,
+        status=status,
+    )
+    db.add(s)
+    db.commit()
+    return s
+
+
+def _make_participant(db, n=None) -> User:
+    u = User(
+        name=f"Participante {n or uuid.uuid4().hex[:6]}",
+        email=f"p{uuid.uuid4().hex[:8]}@x.local",
+        password_hash="x",
+        role=Role.PARTICIPANT,
+    )
+    db.add(u)
+    db.commit()
+    return u
+
+
+def test_create_enrollment_confirmed(db) -> None:
+    s = _make_session(db, capacity=2)
+    p = _make_participant(db)
+    enr = phase2_service.create_enrollment(db, p, s.id)
+    assert enr.status == EnrollmentStatus.CONFIRMED
+    assert enr.waitlist_position is None
+    assert enr.created_at is not None
+
+
+def test_capacity_undefined_blocks(db) -> None:
+    s = _make_session(db, capacity=None)
+    p = _make_participant(db)
+    with pytest.raises(phase2_service.EnrollmentError) as exc:
+        phase2_service.create_enrollment(db, p, s.id)
+    assert exc.value.code == "capacity_undefined"
+
+
+def test_session_full_waitlist_ordering(db) -> None:
+    s = _make_session(db, capacity=1)
+    p1 = _make_participant(db)
+    p2 = _make_participant(db)
+    p3 = _make_participant(db)
+    e1 = phase2_service.create_enrollment(db, p1, s.id)
+    assert e1.status == EnrollmentStatus.CONFIRMED
+    e2 = phase2_service.create_enrollment(db, p2, s.id)
+    assert e2.status == EnrollmentStatus.WAITLISTED
+    assert e2.waitlist_position == 1
+    assert s.status == "full"
+    e3 = phase2_service.create_enrollment(db, p3, s.id)
+    assert e3.waitlist_position == 2
+
+
+def test_duplicate_active_enrollment_blocked(db) -> None:
+    s = _make_session(db, capacity=5)
+    p = _make_participant(db)
+    phase2_service.create_enrollment(db, p, s.id)
+    with pytest.raises(phase2_service.EnrollmentError) as exc:
+        phase2_service.create_enrollment(db, p, s.id)
+    assert exc.value.code == "duplicate"
+
+
+def test_cancel_promotes_next_in_line(db) -> None:
+    s = _make_session(db, capacity=1)
+    p1 = _make_participant(db)
+    p2 = _make_participant(db)
+    p3 = _make_participant(db)
+    e1 = phase2_service.create_enrollment(db, p1, s.id)
+    e2 = phase2_service.create_enrollment(db, p2, s.id)
+    e3 = phase2_service.create_enrollment(db, p3, s.id)
+    assert e2.waitlist_position == 1 and e3.waitlist_position == 2
+    phase2_service.cancel_enrollment(db, p1, e1.id)
+    db.refresh(e2)
+    db.refresh(e3)
+    assert e2.status == EnrollmentStatus.CONFIRMED
+    assert e2.waitlist_position is None
+    assert e3.waitlist_position == 1
+    # Cancelamento de cancelada é rejeitado.
+    with pytest.raises(phase2_service.EnrollmentError):
+        phase2_service.cancel_enrollment(db, p1, e1.id)
+
+
+def test_cancel_not_cancellable_states(db) -> None:
+    s = _make_session(db, capacity=5)
+    p = _make_participant(db)
+    e = phase2_service.create_enrollment(db, p, s.id)
+    e.status = EnrollmentStatus.ATTENDED
+    db.commit()
+    with pytest.raises(phase2_service.EnrollmentError) as exc:
+        phase2_service.cancel_enrollment(db, p, e.id)
+    assert exc.value.code == "not_cancellable"
+
+
+def test_enrollment_in_scheduled_session_rejected(db) -> None:
+    s = _make_session(db, capacity=5, status=SessionStatus.SCHEDULED)
+    p = _make_participant(db)
+    with pytest.raises(phase2_service.EnrollmentError) as exc:
+        phase2_service.create_enrollment(db, p, s.id)
+    assert exc.value.code == "not_open"
+
+
+@pytest.mark.postgres_pending
+def test_concurrent_enrollment_no_double_booking() -> None:
+    """PENDENTE PostgreSQL: inscrições simultâneas devem serializar via
+    FOR UPDATE e o índice parcial único. SQLite não valida bloqueios."""
+    pytest.skip("Requer PostgreSQL real (locks e índice parcial).")
+
+
+@pytest.mark.postgres_pending
+def test_partial_unique_index_enforced() -> None:
+    """PENDENTE PostgreSQL: unicidade parcial não é imposta por SQLite."""
+    pytest.skip("Requer PostgreSQL real (índice parcial).")

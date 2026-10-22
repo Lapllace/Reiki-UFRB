@@ -48,7 +48,10 @@ export function CoordinationReallocations() {
     const { kind, item } = pending;
     if (kind === "apply") {
       const target = choices[item.id];
-      await api.coordination.applyReallocation(item.id, { targetSessionId: target });
+      await api.coordination.applyReallocation(item.id, {
+        alternative: "extra_session",
+        targetSessionId: target,
+      });
       toast.push({ tone: "success", title: "Reorganização aplicada", message: "O sistema confirmou a nova sessão para os participantes." });
     } else {
       await api.coordination.dismissReallocation(item.id);

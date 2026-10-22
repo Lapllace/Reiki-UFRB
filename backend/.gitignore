@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Ambientes virtuais
+.venv/
+venv/
+
+# Variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Testes
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Ferramentas
+.mypy_cache/
+.ruff_cache/
+
+# Banco local (se alguém usar arquivo local por engano)
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/

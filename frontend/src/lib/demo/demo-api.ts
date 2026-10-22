@@ -727,6 +727,20 @@ export const demoApi: ReikiApi = {
       if (record.status !== "pending") {
         fail("conflict", "Esta reorganização já foi tratada.", 409);
       }
+      if (input.alternative === "future_priority") {
+        record.status = "applied";
+        record.alternative = "future_priority";
+        record.priorityGrantedAt = new Date().toISOString();
+        pushEvent(
+          "reallocation",
+          "Prioridade futura registrada; sem garantia automática de vaga.",
+          DEMO_USERS.coordinator.name,
+        );
+        return toReallocation(record);
+      }
+      if (!input.targetSessionId) {
+        fail("validation", "Informe a sessão de destino.", 422);
+      }
       if (!record.candidateSessionIds.includes(input.targetSessionId)) {
         fail("validation", "A sessão escolhida não é uma opção válida.", 422);
       }
@@ -742,6 +756,7 @@ export const demoApi: ReikiApi = {
       }
       target.confirmedCount += record.participantCount;
       record.status = "applied";
+      record.alternative = "extra_session";
       record.appliedToId = target.id;
       pushEvent(
         "reallocation",
@@ -768,4 +783,3 @@ export const demoApi: ReikiApi = {
     },
   },
 };
-

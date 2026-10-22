@@ -258,6 +258,7 @@ export interface CoverRequest {
 }
 
 export type ReallocationStatus = "pending" | "applied" | "dismissed";
+export type ReallocationAlternative = "extra_session" | "future_priority";
 
 export interface Reallocation {
   id: string;
@@ -268,11 +269,15 @@ export interface Reallocation {
   /** Sessões candidatas (extras ou de semanas futuras) sugeridas pelo servidor. */
   candidateSessions: Session[];
   appliedTo?: Session | null;
+  alternative?: ReallocationAlternative | null;
+  priorityGrantedAt?: string | null;
   createdAt: string;
+  decidedAt?: string | null;
 }
 
 export interface ApplyReallocationInput {
-  targetSessionId: string;
+  alternative: ReallocationAlternative;
+  targetSessionId?: string | null;
 }
 
 export type AuditEventKind =

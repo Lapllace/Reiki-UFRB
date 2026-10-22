@@ -1,0 +1,20 @@
+# Exclusivamente para DESENVOLVIMENTO local. Não use estas credenciais em produção.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reiki
+      POSTGRES_PASSWORD: reiki_dev_pass
+      POSTGRES_DB: reiki
+    ports:
+      - "5432:5432"
+    volumes:
+      - reiki_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reiki -d reiki"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  reiki_pgdata:
