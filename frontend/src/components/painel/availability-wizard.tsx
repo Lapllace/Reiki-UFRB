@@ -55,6 +55,7 @@ function groupByDay(options: SlotOption[]) {
 const statusLabel: Record<WeeklyAvailability["status"], { text: string; tone: "sage" | "forest" | "honey" }> = {
   pending: { text: "Ainda não registrada", tone: "honey" },
   published: { text: "Disponibilidade publicada", tone: "forest" },
+  submitted: { text: "Disponibilidade registrada", tone: "forest" },
   unavailable: { text: "Indisponibilidade declarada", tone: "sage" },
 };
 
@@ -79,11 +80,11 @@ export function AvailabilityWizard() {
     return {
       key: data.weekStart,
       mode: data.status === "unavailable" ? "unavailable" : "available",
-      selected: data.selectedSlotIds,
+      selected: data.selectedSlotIds ?? [],
     };
   }, [data, draft]);
 
-  const days = useMemo(() => (data ? groupByDay(data.options) : []), [data]);
+  const days = useMemo(() => (data ? groupByDay(data.options ?? []) : []), [data]);
   const optionById = useMemo(() => new Map((data?.options ?? []).map((option) => [option.id, option])), [data]);
 
   function navigate(delta: number) {
@@ -136,6 +137,16 @@ export function AvailabilityWizard() {
       const saved = await api.availability.publish({
         weekStart: data.weekStart,
         unavailable: current.mode === "unavailable",
+        entries: current.mode === "unavailable"
+          ? []
+          : current.selected
+              .map((id) => optionById.get(id))
+              .filter((option): option is SlotOption => Boolean(option))
+              .map((option) => ({
+                startsAt: option.startsAt,
+                endsAt: option.endsAt,
+                locationId: option.location.id,
+              })),
         slotIds: current.mode === "unavailable" ? [] : current.selected,
       });
       setDraft(null);

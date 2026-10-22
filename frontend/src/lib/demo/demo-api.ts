@@ -305,6 +305,7 @@ function buildAvailability(weekStart: string): WeeklyAvailability {
   return {
     weekStart,
     weekEnd: toISODate(addDays(start, 6)),
+    entries: [],
     status: record.status,
     deadline: canEdit
       ? new Date(
@@ -472,11 +473,12 @@ export const demoApi: ReikiApi = {
       if (!view.canEdit) {
         fail("conflict", view.lockedReason ?? "Registro indisponível para esta semana.", 409);
       }
-      if (!input.unavailable && input.slotIds.length === 0) {
+      const slotIds = input.slotIds ?? [];
+      if (!input.unavailable && slotIds.length === 0) {
         fail("validation", "Selecione ao menos um horário ou declare indisponibilidade.", 422);
       }
-      const validIds = new Set(view.options.map((option) => option.id));
-      if (input.slotIds.some((id) => !validIds.has(id))) {
+      const validIds = new Set((view.options ?? []).map((option) => option.id));
+      if (slotIds.some((id) => !validIds.has(id))) {
         fail("validation", "Um dos horários escolhidos não é válido para esta semana.", 422);
       }
       const current = store();
@@ -484,14 +486,14 @@ export const demoApi: ReikiApi = {
       row.set(MY_INSTRUCTOR_ID, {
         status: input.unavailable ? "unavailable" : "published",
         submittedAt: new Date().toISOString(),
-        selectedSlotIds: input.unavailable ? [] : input.slotIds,
+        selectedSlotIds: input.unavailable ? [] : slotIds,
       } satisfies AvailabilityRecord);
       current.availability.set(input.weekStart, row);
       pushEvent(
         "availability",
         input.unavailable
           ? `${DEMO_INSTRUCTORS.i1.name} declarou indisponibilidade para a semana de ${input.weekStart}.`
-          : `${DEMO_INSTRUCTORS.i1.name} publicou ${plural(input.slotIds.length, "horário")} para a semana de ${input.weekStart}.`,
+          :           `${DEMO_INSTRUCTORS.i1.name} publicou ${plural(slotIds.length, "horário")} para a semana de ${input.weekStart}.`,
         DEMO_INSTRUCTORS.i1.name,
       );
       return buildAvailability(input.weekStart);
@@ -535,8 +537,9 @@ export const demoApi: ReikiApi = {
           message: "O ministrante cancelou. A solicitação de cobertura foi enviada aos ministrantes elegíveis.",
         },
       ];
+      const coverRequestId = `cr-${current.counters.event + 1}`;
       current.coverRequests.unshift({
-        id: `cr-${current.counters.event + 1}`,
+        id: coverRequestId,
         status: "open",
         sessionId,
         originalInstructor: DEMO_INSTRUCTORS.i1,
@@ -550,7 +553,7 @@ export const demoApi: ReikiApi = {
         DEMO_INSTRUCTORS.i1.name,
         sessionId,
       );
-      return toInstructorSession(record);
+      return { coverRequestId, status: "open", sessionId };
     },
     async listCoverInvites(signal) {
       await gate({ role: "instructor", signal });

@@ -95,3 +95,19 @@ Sessões extras são criadas por `POST /coordination/sessions/extra` com
 `startsAt`, `endsAt`, `locationId` e `capacity` obrigatórios. Elas começam em
 `scheduled`; a coordenação precisa publicá-las/abri-las segundo as regras do
 ciclo antes de usá-las como destino.
+
+## Fase 4.1 — integração efetiva
+
+Disponibilidade usa `POST /instructor/availability` e envia `entries` com os
+intervalos informados pelo ministrante. `options`/`selectedSlotIds` existem
+somente como compatibilidade do modo demonstração.
+
+`CoverInviteOut` retorna `sessionId`, `status` (inclusive `declined`) e
+`accepted`; não retorna a sessão completa nem o nome de outro ministrante.
+O cancelamento retorna `{ coverRequestId, status, sessionId }`, e não uma sessão.
+
+As telas integradas usam ainda `GET /instructor/sessions`,
+`GET /instructor/sessions/{id}/roster`, as rotas de ciclo/sessões/roster,
+coberturas e eventos da coordenação, além de `GET /me/notifications` e
+`POST /me/notifications/{id}/read`. Rosters são privados e notificações só
+podem ser marcadas como lidas pelo próprio destinatário.

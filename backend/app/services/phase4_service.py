@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.location import Location
@@ -68,9 +69,20 @@ def create_cases_for_uncovered_session(
             participant_id=enrollment.participant_id,
             status=ReallocationStatus.PENDING,
         )
-        db.add(case)
-        db.flush()
-        _history(db, case, "created", actor, "Inscrição afetada por sessão sem cobertura.")
+        try:
+            with db.begin_nested():
+                db.add(case)
+                db.flush()
+        except IntegrityError:
+            case = db.scalar(
+                select(ReallocationCase).where(
+                    ReallocationCase.origin_enrollment_id == enrollment.id
+                )
+            )
+            if case is None:
+                raise
+        else:
+            _history(db, case, "created", actor, "Inscrição afetada por sessão sem cobertura.")
         cases.append(case)
     db.flush()
     return cases

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.base import ApiModel, camel
 from app.schemas.domain import SessionOut
@@ -32,6 +32,19 @@ class CreateExtraSessionIn(ApiModel):
         validation_alias=camel("location_id"), serialization_alias=camel("location_id")
     )
     capacity: int = Field(gt=0)
+
+    @field_validator("starts_at", "ends_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Data e hora devem informar o fuso horário.")
+        return value
+
+    @model_validator(mode="after")
+    def require_forward_period(self) -> "CreateExtraSessionIn":
+        if self.ends_at <= self.starts_at:
+            raise ValueError("O horário final deve ser posterior ao inicial.")
+        return self
 
 
 class ApplyReallocationIn(ApiModel):

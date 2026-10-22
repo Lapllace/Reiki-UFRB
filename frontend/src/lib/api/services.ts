@@ -10,6 +10,7 @@ import type {
   CoverRequest,
   Enrollment,
   EnrollmentResult,
+  CancelSessionResult,
   InstructorSession,
   Location,
   Reallocation,
@@ -73,7 +74,7 @@ export function createRealApi(): ReikiApi {
         }),
       publish: (input) =>
         apiRequest<WeeklyAvailability>(endpoints.instructor.availability, {
-          method: "PUT",
+          method: "POST",
           body: input,
         }),
     },
@@ -83,7 +84,7 @@ export function createRealApi(): ReikiApi {
       roster: (sessionId, signal) =>
         apiRequest<RosterEntry[]>(endpoints.instructor.roster(sessionId), { signal }),
       cancelSession: (sessionId, reason) =>
-        apiRequest<InstructorSession>(endpoints.instructor.cancelSession(sessionId), {
+        apiRequest<CancelSessionResult>(endpoints.instructor.cancelSession(sessionId), {
           method: "POST",
           body: { reason },
         }),

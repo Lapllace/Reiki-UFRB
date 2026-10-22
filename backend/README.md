@@ -2,7 +2,7 @@
 
 FastAPI + SQLAlchemy 2 + Alembic + PostgreSQL (psycopg3). Fundação (Fase 1) mais
 disponibilidade semanal, inscrições/fila de espera (Fase 2), cobertura (Fase 3)
-e reorganização administrativa (Fase 4).
+e reorganização administrativa (Fases 4 e 4.1).
 
 ## Status — IMPORTANTE
 
@@ -14,6 +14,7 @@ Alembic e servem apenas para inspeção:
 - `migrations_offline_postgresql_phase2.sql` — Fase 1 + 2 (a7c3d9e1f2b4)
 - `migrations_offline_postgresql_phase3.sql` — Fase 1 + 2 + 3 (b8d4e2f6a9c1)
 - `migrations_offline_postgresql_phase4.sql` — Fase 1 + 2 + 3 + 4 (c4f5a6b7d8e9)
+- `migrations_offline_postgresql_phase41.sql` — cadeia até a integridade e integração 4.1 (d5e6f7a8b9c0)
 
 SQLite é usado nos testes unitários. Ele **não** valida: bloqueios (`FOR UPDATE`),
 índice parcial único, timezone de `TIMESTAMP WITH TIME ZONE` nem a execução real
@@ -40,6 +41,8 @@ das migrações.
   para uma sessão extra aberta com vaga ou registrar prioridade futura.
   Inscrições originais nunca são apagadas; a nova inscrição referencia o caso.
   A prioridade futura é apenas auditável e não garante vaga automaticamente.
+- **Fase 4.1 — integração**: sessões e rosters privados, ciclo e coberturas da
+  coordenação, notificações persistentes e eventos de auditoria.
 
 ## Endpoints (Fase 2)
 
@@ -131,3 +134,4 @@ cd backend
 5. Regras semestrais de participação (desconhecidas).
 6. Execução real da migração e testes de concorrência da Fase 4 no PostgreSQL.
 7. Regras institucionais para uso e seleção de prioridades futuras.
+8. Execução da migração d5e6f7a8b9c0 e validação de concorrência em PostgreSQL real.

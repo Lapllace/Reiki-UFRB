@@ -21,6 +21,12 @@ export interface User {
   role: Role;
 }
 
+export interface CancelSessionResult {
+  coverRequestId: string;
+  status: CoverRequestStatus;
+  sessionId: string;
+}
+
 export interface Location {
   id: string;
   name: string;
@@ -147,7 +153,18 @@ export interface SlotOption {
   location: Location;
 }
 
-export type AvailabilityStatus = "pending" | "published" | "unavailable";
+export type AvailabilityStatus = "pending" | "published" | "submitted" | "unavailable";
+
+export type AvailabilityEntryKind = "available" | "unavailable";
+
+export interface AvailabilityEntry {
+  id: string;
+  kind: AvailabilityEntryKind;
+  startsAt: string;
+  endsAt: string;
+  locationId?: string | null;
+  note?: string | null;
+}
 
 export interface WeeklyAvailability {
   weekStart: string;
@@ -158,15 +175,24 @@ export interface WeeklyAvailability {
   /** O servidor informa se o registro está aberto/editável. */
   canEdit: boolean;
   lockedReason?: string | null;
-  options: SlotOption[];
-  selectedSlotIds: string[];
+  entries?: AvailabilityEntry[];
+  /** Compatibilidade temporária do modo demonstração legado. */
+  options?: SlotOption[];
+  selectedSlotIds?: string[];
 }
 
 export interface PublishAvailabilityInput {
   weekStart: string;
   /** `true` para declarar indisponibilidade na semana inteira. */
   unavailable: boolean;
-  slotIds: string[];
+  note?: string | null;
+  entries?: {
+    startsAt: string;
+    endsAt: string;
+    locationId?: string | null;
+    note?: string | null;
+  }[];
+  slotIds?: string[];
 }
 
 export interface RosterEntry {
@@ -186,16 +212,18 @@ export type CoverInviteStatus =
   | "pending"
   | "accepted"
   | "taken"
+  | "declined"
   | "expired"
   | "withdrawn";
 
 export interface CoverInvite {
   id: string;
   status: CoverInviteStatus;
-  session: Session;
+  sessionId?: string;
+  session?: Session | null;
   createdAt: string;
   expiresAt?: string | null;
-  /** Quem assumiu a sessão (quando `taken`). */
+  accepted?: boolean;
   acceptedBy?: InstructorSummary | null;
 }
 

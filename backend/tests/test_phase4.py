@@ -12,6 +12,7 @@ from app.models.phase2 import Enrollment, EnrollmentStatus
 from app.models.phase4 import ReallocationAlternative, ReallocationCase, ReallocationStatus
 from app.models.session_week import ReikiSession, SessionStatus
 from app.models.user import Role, User
+from app.schemas.phase4 import CreateExtraSessionIn
 from app.services import cover_service, phase2_service, phase4_service
 from tests.conftest import login
 from tests.test_auth import PASSWORD
@@ -96,6 +97,32 @@ def test_create_extra_session_requires_capacity_and_active_location(db) -> None:
             location_id=location.id, capacity=0,
         )
     assert exc.value.code == "invalid_capacity"
+
+
+def test_extra_session_schema_requires_timezone_and_valid_period() -> None:
+    with pytest.raises(ValueError):
+        CreateExtraSessionIn.model_validate({
+            "startsAt": "2026-11-04T14:00:00",
+            "endsAt": "2026-11-04T15:00:00Z",
+            "locationId": str(uuid.uuid4()),
+            "capacity": 1,
+        })
+    with pytest.raises(ValueError):
+        CreateExtraSessionIn.model_validate({
+            "startsAt": "2026-11-04T15:00:00Z",
+            "endsAt": "2026-11-04T14:00:00Z",
+            "locationId": str(uuid.uuid4()),
+            "capacity": 1,
+        })
+
+
+def test_enrollment_reallocation_has_restrict_foreign_key() -> None:
+    foreign_keys = Enrollment.__table__.c.reallocation_id.foreign_keys
+    assert any(
+        key.target_fullname == "reallocation_cases.id"
+        and key.ondelete == "RESTRICT"
+        for key in foreign_keys
+    )
 
 
 def test_apply_extra_session_preserves_origin_and_blocks_duplicate(db) -> None:

@@ -27,6 +27,7 @@ from app.models.phase4 import (
     ReallocationHistory,
     ReallocationStatus,
 )
+from app.models.phase41 import AuditEvent, Notification
 from app.models.session_auth import AuthSession
 from app.models.session_week import ReikiSession, SessionStatus
 from app.models.user import Role, User
@@ -36,6 +37,7 @@ __all__ = [
     "AvailabilityEntry",
     "AvailabilityEntryKind",
     "AvailabilityStatus",
+    "AuditEvent",
     "Base",
     "CyclePhase",
     "CoverInvite",
@@ -51,6 +53,7 @@ __all__ = [
     "ReallocationCase",
     "ReallocationHistory",
     "ReallocationStatus",
+    "Notification",
     "SessionStatus",
     "User",
     "WeeklyAvailability",

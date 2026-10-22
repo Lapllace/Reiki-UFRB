@@ -7,6 +7,7 @@ import type {
   CoverRequest,
   Enrollment,
   EnrollmentResult,
+  CancelSessionResult,
   InstructorSession,
   Location,
   LoginInput,
@@ -56,7 +57,7 @@ export interface ReikiApi {
   instructor: {
     listSessions(signal?: AbortSignal): Promise<InstructorSession[]>;
     roster(sessionId: string, signal?: AbortSignal): Promise<RosterEntry[]>;
-    cancelSession(sessionId: string, reason: string): Promise<InstructorSession>;
+    cancelSession(sessionId: string, reason: string): Promise<CancelSessionResult>;
     listCoverInvites(signal?: AbortSignal): Promise<CoverInvite[]>;
     /** O primeiro aceite registrado pelo servidor assume a sessão. */
     acceptCover(inviteId: string): Promise<AcceptCoverResult>;

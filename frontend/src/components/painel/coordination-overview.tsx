@@ -33,6 +33,7 @@ const phases: { id: CyclePhase; label: string }[] = [
 
 const availabilityMeta: Record<AvailabilityStatus, { label: string; tone: Tone }> = {
   published: { label: "Publicada", tone: "forest" },
+  submitted: { label: "Registrada", tone: "forest" },
   unavailable: { label: "Indisponível", tone: "sage" },
   pending: { label: "Pendente", tone: "honey" },
 };

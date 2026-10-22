@@ -157,7 +157,15 @@ class Enrollment(Base, UUIDPk, Timestamped):
         index=True,
     )
     reallocation_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), nullable=True, index=True
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "reallocation_cases.id",
+            name="fk_enrollments_reallocation_id",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+        nullable=True,
+        index=True,
     )
     status: Mapped[EnrollmentStatus] = mapped_column(String(20), nullable=False)
     # Posição na fila (1 = próximo). Nula fora de ``waitlisted``.

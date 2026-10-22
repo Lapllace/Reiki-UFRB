@@ -13,6 +13,11 @@ from app.api.routes.phase2 import (
 )
 from app.api.routes.phase3 import instructor_router as phase3_instructor_router
 from app.api.routes.phase4 import router as phase4_router
+from app.api.routes.integration import (
+    coordination_router as integration_coordination_router,
+    instructor_router as integration_instructor_router,
+    notifications_router,
+)
 from app.core.config import get_settings
 
 
@@ -42,6 +47,9 @@ def create_app() -> FastAPI:
     app.include_router(me_router)
     app.include_router(phase3_instructor_router)
     app.include_router(phase4_router)
+    app.include_router(integration_instructor_router)
+    app.include_router(integration_coordination_router)
+    app.include_router(notifications_router)
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(
