@@ -22,6 +22,7 @@ import {
   weekdayName,
   weekDays,
 } from "@/lib/dates";
+import { plural } from "@/lib/format";
 import { useNow } from "@/lib/hooks/use-now";
 import { useResource } from "@/lib/hooks/use-resource";
 import type { Session } from "@/lib/types";
@@ -87,7 +88,7 @@ export function AgendaView() {
   return (
     <div>
       {/* Navegação entre semanas */}
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2" role="group" aria-label="Navegar entre semanas">
           <Button
             variant="secondary"
@@ -100,8 +101,8 @@ export function AgendaView() {
             <ChevronLeft className="size-5" aria-hidden />
           </Button>
           <div className="min-w-0 flex-1 px-2 text-center sm:min-w-72">
-            <p className="eyebrow">{isCurrent ? "Esta semana" : "Semana"}</p>
-            <p className="mt-1.5 font-display text-xl text-forest-900 sm:text-2xl" aria-live="polite">
+            <p className="eyebrow text-xs sm:text-sm">{isCurrent ? "Esta semana" : "Semana"}</p>
+            <p className="mt-1 font-display text-lg text-forest-900 sm:text-2xl" aria-live="polite">
               {weekStart ? formatWeekRange(weekStart) : "Carregando…"}
             </p>
           </div>
@@ -117,7 +118,7 @@ export function AgendaView() {
           </Button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {!isCurrent && currentWeek ? (
             <Button
               variant="ghost"
@@ -134,33 +135,35 @@ export function AgendaView() {
 
       {/* Filtro por local */}
       {locations.length > 1 ? (
-        <div className="mt-6" role="group" aria-label="Filtrar por local">
-          <div className="scroll-hidden -mx-5 flex gap-2 overflow-x-auto px-5 sm:mx-0 sm:flex-wrap sm:px-0">
-            {[{ id: "all", name: "Todos os locais" }, ...locations].map((location) => {
-              const active = locationFilter === location.id;
-              return (
-                <button
-                  key={location.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setLocationFilter(location.id)}
-                  className={cn(
-                    "min-h-11 shrink-0 rounded-full border px-5 text-sm font-semibold transition-colors",
-                    active
-                      ? "border-forest-700 bg-forest-700 text-ivory"
-                      : "border-line-strong bg-paper text-ink-700 hover:border-forest-300",
-                  )}
-                >
-                  {location.name}
-                </button>
-              );
-            })}
+        <div className="mt-3" role="group" aria-label="Filtrar por local">
+          <div className="scroll-hidden overflow-x-auto px-5 sm:px-0">
+            <div className="flex gap-2 sm:flex-wrap">
+              {[{ id: "all", name: "Todos os locais" }, ...locations].map((location) => {
+                const active = locationFilter === location.id;
+                return (
+                  <button
+                    key={location.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setLocationFilter(location.id)}
+                    className={cn(
+                      "min-h-10 shrink-0 whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition-colors sm:min-h-11 sm:px-5",
+                      active
+                        ? "border-forest-700 bg-forest-700 text-ivory"
+                        : "border-line-strong bg-paper text-ink-700 hover:border-forest-300",
+                    )}
+                  >
+                    {location.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : null}
 
       {/* Conteúdo */}
-      <div className="mt-8">
+      <div className="mt-4">
         {error ? (
           <ErrorState
             error={error}
@@ -207,7 +210,7 @@ export function AgendaView() {
                   ))}
                 </ul>
                 {noticeSessions.length > 4 ? (
-                  <p className="mt-2">E mais {noticeSessions.length - 4} aviso(s) nos cartões abaixo.</p>
+                  <p className="mt-2">E mais {plural(noticeSessions.length - 4, "aviso")} nos cartões abaixo.</p>
                 ) : null}
               </Alert>
             ) : null}
@@ -239,7 +242,7 @@ export function AgendaView() {
                           {date.getDate()}
                         </span>
                         <span className="sr-only">
-                          {count === 0 ? "sem sessões" : `${count} sessão(ões)`}
+                          {count === 0 ? "sem sessões" : plural(count, "sessão", "sessões")}
                         </span>
                         <span
                           aria-hidden
@@ -267,7 +270,7 @@ export function AgendaView() {
                 }
               />
             ) : (
-              <div className="space-y-10">
+              <div className="space-y-6">
                 {days.map((key) => {
                   const sessions = byDay.get(key) ?? [];
                   const date = parseISODate(key);
@@ -284,7 +287,7 @@ export function AgendaView() {
                           {date.getDate()}
                         </p>
                         <div className="sm:mt-2">
-                          <h2 id={`titulo-${key}`} className="text-base font-bold capitalize text-forest-900">
+                          <h2 id={`titulo-${key}`} className="capitalize-first text-base font-bold text-forest-900">
                             {weekdayName(date)}
                           </h2>
                           <p className="text-sm text-ink-600">{formatDayMonth(date)}</p>

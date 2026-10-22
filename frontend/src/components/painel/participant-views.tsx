@@ -13,23 +13,17 @@ import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { toApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
-import { useResource } from "@/lib/hooks/use-resource";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { Enrollment } from "@/lib/types";
 import { EnrollmentCard } from "./enrollment-card";
 import { NotificationItem } from "./notification-item";
 
 function useEnrollments() {
-  const { user } = useAuth();
-  return useResource(user ? `enrollments:${user.id}` : null, (signal) =>
-    api.enrollments.listMine(signal),
-  );
+  return useAccountResource("enrollments", (signal) => api.enrollments.listMine(signal));
 }
 
 function useNotifications() {
-  const { user } = useAuth();
-  return useResource(user ? `notifications:${user.id}` : null, (signal) =>
-    api.notifications.list(signal),
-  );
+  return useAccountResource("notifications", (signal) => api.notifications.list(signal));
 }
 
 const byStart = (a: Enrollment, b: Enrollment) => a.session.startsAt.localeCompare(b.session.startsAt);

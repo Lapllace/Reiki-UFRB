@@ -11,10 +11,11 @@ import { PageHeader } from "@/components/ui/section";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatDayLong, formatTimeRange } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { plural } from "@/lib/format";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { Reallocation, ReallocationStatus } from "@/lib/types";
 
 const statusMeta: Record<ReallocationStatus, { label: string; tone: Tone }> = {
@@ -26,10 +27,9 @@ const statusMeta: Record<ReallocationStatus, { label: string; tone: Tone }> = {
 type Pending = { kind: "apply" | "dismiss"; item: Reallocation } | null;
 
 export function CoordinationReallocations() {
-  const { user } = useAuth();
   const toast = useToast();
-  const { data, error, loading, reload } = useResource(
-    user ? `reallocations:${user.id}` : null,
+  const { data, error, loading, reload } = useAccountResource(
+    "reallocations",
     (signal) => api.coordination.listReallocations(signal),
   );
   const [choices, setChoices] = useState<Record<string, string>>({});
@@ -92,7 +92,7 @@ export function CoordinationReallocations() {
                         <LocationLine session={item.originSession} />
                       </div>
                       <Badge tone="honey" icon={Users}>
-                        {item.participantCount} participante(s)
+                        {plural(item.participantCount, "participante")}
                       </Badge>
                     </div>
 
@@ -133,8 +133,8 @@ export function CoordinationReallocations() {
                                     {free === null
                                       ? "Vagas não informadas"
                                       : insufficient
-                                        ? `Apenas ${free} vaga(s): insuficiente`
-                                        : `${free} vaga(s) livres`}
+                                        ? `Apenas ${plural(free, "vaga")}: insuficiente`
+                                        : `${plural(free, "vaga livre", "vagas livres")}`}
                                   </span>
                                 </span>
                               </label>
@@ -169,7 +169,7 @@ export function CoordinationReallocations() {
                     <div>
                       <p className="font-semibold text-forest-900">{item.reason}</p>
                       <p className="text-sm text-ink-600">
-                        {item.participantCount} participante(s) · {formatDateTime(item.createdAt)}
+                        {plural(item.participantCount, "participante")} · {formatDateTime(item.createdAt)}
                         {item.appliedTo
                           ? ` · destino: ${formatDayLong(new Date(item.appliedTo.startsAt))}, ${formatTimeRange(item.appliedTo.startsAt, item.appliedTo.endsAt)}`
                           : ""}

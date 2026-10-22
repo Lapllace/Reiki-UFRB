@@ -13,16 +13,17 @@ import { EmptyState, ErrorState, LoadingBlock } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth/auth-context";
 import { formatDayLong, formatTimeRange, formatWeekRange } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { plural } from "@/lib/format";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import { useCoverInvites } from "./cover-invites";
 
 export function InstructorHome() {
   const { user } = useAuth();
-  const sessions = useResource(user ? `instructor-sessions:${user.id}` : null, (signal) =>
+  const sessions = useAccountResource("instructor-sessions", (signal) =>
     api.instructor.listSessions(signal),
   );
   const invites = useCoverInvites();
-  const availability = useResource(user ? `availability-open:${user.id}` : null, (signal) =>
+  const availability = useAccountResource("availability-open", (signal) =>
     api.availability.get(null, signal),
   );
 
@@ -43,7 +44,7 @@ export function InstructorHome() {
       {pendingInvites.length > 0 ? (
         <Alert
           tone="warning"
-          title={`${pendingInvites.length} convite(s) de cobertura aguardando resposta`}
+          title={`${plural(pendingInvites.length, "convite")} de cobertura aguardando resposta`}
           action={
             <ButtonLink href="/ministrante/convites" size="sm" icon={<ArrowRight className="size-4" aria-hidden />}>
               Ver convites

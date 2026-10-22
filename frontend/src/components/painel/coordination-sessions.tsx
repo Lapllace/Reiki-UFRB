@@ -10,16 +10,16 @@ import { CheckField } from "@/components/ui/form";
 import { PageHeader } from "@/components/ui/section";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/ui/states";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDayLong, formatTime, formatTimeRange, localDateKey } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { plural } from "@/lib/format";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { Session } from "@/lib/types";
 import { RosterDialog } from "./instructor-sessions";
 import { useWeekSelection, WeekSwitcher } from "./week-switcher";
 
 export function CoordinationSessions() {
-  const { user } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
   const [onlyExtra, setOnlyExtra] = useState(false);
   const [onlyAttention, setOnlyAttention] = useState(false);
@@ -27,8 +27,8 @@ export function CoordinationSessions() {
   const [rosterOpen, setRosterOpen] = useState(false);
   const { current, week } = useWeekSelection(selected);
 
-  const { data, error, loading, refreshing, reload } = useResource(
-    user && week ? `coord-sessions:${user.id}:${week}` : null,
+  const { data, error, loading, refreshing, reload } = useAccountResource(
+    week ? `coord-sessions:${week}` : null,
     (signal) => api.coordination.listSessions(week as string, signal),
   );
 
@@ -131,11 +131,19 @@ export function CoordinationSessions() {
                       <InstructorLine session={session} />
                       <NoticeList notices={session.notices} className="pt-1" />
                     </div>
-                    <CapacityMeter
-                      capacity={session.capacity}
-                      confirmed={session.confirmedCount}
-                      waitlist={session.waitlistCount}
-                    />
+                    {session.status === "completed" || session.status === "cancelled" ? (
+                      <p className="text-sm text-ink-600">
+                        {session.confirmedCount === null
+                          ? "Inscrições não informadas"
+                          : `${plural(session.confirmedCount, "inscrito")}${session.status === "completed" ? " na sessão" : " antes do cancelamento"}`}
+                      </p>
+                    ) : (
+                      <CapacityMeter
+                        capacity={session.capacity}
+                        confirmed={session.confirmedCount}
+                        waitlist={session.waitlistCount}
+                      />
+                    )}
                     <Button
                       variant="secondary"
                       size="sm"

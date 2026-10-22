@@ -92,9 +92,15 @@ function AccessDenied({ role }: { role: Role | null }) {
 /**
  * Estrutura dos painéis autenticados e proteção de rota no cliente.
  *
- * ATENÇÃO: esta verificação melhora a experiência (redirecionamento e mensagens),
- * mas NÃO é uma barreira de segurança. Toda API precisa validar sessão e perfil
- * no servidor; aqui só exibimos conteúdo depois que o servidor confirma o perfil.
+ * Enquanto o servidor confirma a sessão (`auth.me`), a estrutura (cabeçalho e
+ * navegação do perfil esperado) e as páginas já são renderizadas no shell
+ * estático: cada página mostra o próprio esqueleto e NÃO busca dados antes da
+ * confirmação (veja `useAccountResource`). Isso mantém a navegação instantânea.
+ * Se a sessão não existir ou o perfil não corresponder, o conteúdo é trocado por
+ * redirecionamento ou pela tela de acesso negado.
+ *
+ * ATENÇÃO: esta verificação melhora a experiência, mas NÃO é uma barreira de
+ * segurança. Toda API precisa validar sessão e perfil no servidor.
  */
 export function PanelShell({ role, children }: { role: Role; children: ReactNode }) {
   const { state, user, logout, refresh } = useAuth();
@@ -106,7 +112,9 @@ export function PanelShell({ role, children }: { role: Role; children: ReactNode
     if (anonymous) router.replace(`/entrar?next=${encodeURIComponent(pathname)}`);
   }, [anonymous, pathname, router]);
 
-  if (state.status === "loading" || anonymous) return <PanelLoading />;
+  const confirming = state.status === "loading";
+
+  if (anonymous) return <PanelLoading />;
 
   if (state.status === "error") {
     return (
@@ -116,7 +124,7 @@ export function PanelShell({ role, children }: { role: Role; children: ReactNode
     );
   }
 
-  if (!user || user.role !== role) return <AccessDenied role={user?.role ?? null} />;
+  if (!confirming && (!user || user.role !== role)) return <AccessDenied role={user?.role ?? null} />;
 
   const items = navByRole[role];
   const isActive = (item: PanelItem) =>
@@ -131,12 +139,17 @@ export function PanelShell({ role, children }: { role: Role; children: ReactNode
           </Link>
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
-              <p className="text-sm font-semibold leading-tight text-forest-900">{user.name}</p>
-              <p className="text-xs text-ink-600">{roleLabels[user.role]}</p>
+              {user ? (
+                <p className="text-sm font-semibold leading-tight text-forest-900">{user.name}</p>
+              ) : (
+                <Skeleton className="ml-auto h-4 w-32" />
+              )}
+              <p className="text-xs text-ink-600">{roleLabels[role]}</p>
             </div>
             <Button
               variant="ghost"
               size="sm"
+              disabled={!user}
               onClick={() => void logout().then(() => router.replace("/"))}
               icon={<LogOut className="size-4" aria-hidden />}
             >

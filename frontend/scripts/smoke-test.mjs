@@ -1,6 +1,7 @@
 // Teste de fumaça: sobe o servidor (dev ou start), busca as rotas e reporta status HTTP.
 // Uso: node scripts/smoke-test.mjs dev|start [porta]
 import { spawn, execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const mode = process.argv[2] === "start" ? "start" : "dev";
 const port = process.argv[3] ?? (mode === "start" ? "3112" : "3111");
@@ -26,8 +27,10 @@ const routes = [
   "/rota-inexistente",
 ];
 
-const child = spawn("npx", ["next", mode, "-p", port], {
-  shell: true,
+// Executa o bin do Next diretamente com o Node (sem shell): o PID é o do servidor
+// e só o processo iniciado por este teste é encerrado no final.
+const nextBin = fileURLToPath(new URL("../node_modules/next/dist/bin/next", import.meta.url));
+const child = spawn(process.execPath, [nextBin, mode, "-p", port], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 let log = "";
@@ -71,4 +74,5 @@ try {
   const hits = lines.flatMap((line, index) => (/error|warn|⨯/i.test(line) ? lines.slice(index, index + 8) : []));
   if (hits.length) console.log("\nTrechos de erro/aviso do servidor:\n" + hits.slice(0, 60).join("\n"));
 }
+console.log(`\nSMOKE ${mode}: ${failed ? "FALHOU" : "OK"} (código de saída ${failed ? 1 : 0})`);
 process.exit(failed ? 1 : 0);

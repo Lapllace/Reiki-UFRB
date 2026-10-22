@@ -12,10 +12,10 @@ import { PageHeader } from "@/components/ui/section";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatDayLong, formatTime, formatTimeRange } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { AcceptCoverResult, CoverInvite, CoverInviteStatus } from "@/lib/types";
 
 const statusMeta: Record<CoverInviteStatus, { label: string; tone: Tone }> = {
@@ -27,9 +27,8 @@ const statusMeta: Record<CoverInviteStatus, { label: string; tone: Tone }> = {
 };
 
 export function useCoverInvites() {
-  const { user } = useAuth();
-  return useResource(
-    user ? `cover-invites:${user.id}` : null,
+  return useAccountResource(
+    "cover-invites",
     (signal) => api.instructor.listCoverInvites(signal),
     { refreshInterval: 30_000 },
   );

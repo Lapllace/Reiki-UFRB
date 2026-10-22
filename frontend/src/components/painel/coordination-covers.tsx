@@ -8,10 +8,10 @@ import { Badge, type Tone } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/section";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/ui/states";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { CoverRequest, CoverRequestStatus } from "@/lib/types";
 
 const meta: Record<CoverRequestStatus, { label: string; tone: Tone }> = {
@@ -69,9 +69,8 @@ function RequestCard({ request }: { request: CoverRequest }) {
 }
 
 export function CoordinationCovers() {
-  const { user } = useAuth();
-  const { data, error, loading, refreshing, reload } = useResource(
-    user ? `cover-requests:${user.id}` : null,
+  const { data, error, loading, refreshing, reload } = useAccountResource(
+    "cover-requests",
     (signal) => api.coordination.listCoverRequests(signal),
     { refreshInterval: 30_000 },
   );

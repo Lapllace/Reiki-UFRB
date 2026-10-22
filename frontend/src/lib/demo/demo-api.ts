@@ -10,6 +10,7 @@
 import type { ReikiApi } from "@/lib/api/contract";
 import { ApiError, fallbackMessage } from "@/lib/api/errors";
 import { addDays, parseISODate, toISODate, weekDays } from "@/lib/dates";
+import { plural } from "@/lib/format";
 import type {
   AcceptCoverResult,
   AuditEvent,
@@ -490,7 +491,7 @@ export const demoApi: ReikiApi = {
         "availability",
         input.unavailable
           ? `${DEMO_INSTRUCTORS.i1.name} declarou indisponibilidade para a semana de ${input.weekStart}.`
-          : `${DEMO_INSTRUCTORS.i1.name} publicou ${input.slotIds.length} horário(s) para a semana de ${input.weekStart}.`,
+          : `${DEMO_INSTRUCTORS.i1.name} publicou ${plural(input.slotIds.length, "horário")} para a semana de ${input.weekStart}.`,
         DEMO_INSTRUCTORS.i1.name,
       );
       return buildAvailability(input.weekStart);
@@ -734,7 +735,7 @@ export const demoApi: ReikiApi = {
       if (free < record.participantCount) {
         fail(
           "conflict",
-          `A sessão escolhida tem ${free} vaga(s) para ${record.participantCount} participante(s).`,
+          `A sessão escolhida tem ${plural(free, "vaga")} para ${plural(record.participantCount, "participante")}.`,
           409,
           "not_enough_capacity",
         );
@@ -744,7 +745,7 @@ export const demoApi: ReikiApi = {
       record.appliedToId = target.id;
       pushEvent(
         "reallocation",
-        `${record.participantCount} participante(s) reorganizado(s) para outra sessão.`,
+        `${plural(record.participantCount, "participante reorganizado", "participantes reorganizados")} para outra sessão.`,
         DEMO_USERS.coordinator.name,
         target.id,
       );

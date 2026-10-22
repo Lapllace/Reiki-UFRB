@@ -20,10 +20,11 @@ import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { toApiError } from "@/lib/api/errors";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDayLong, formatTime, formatTimeRange } from "@/lib/dates";
 import { fieldErrors } from "@/lib/forms";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import { useResource } from "@/lib/hooks/use-resource";
 import type { InstructorSession } from "@/lib/types";
 
@@ -210,9 +211,8 @@ function CancelSessionDialog({
 }
 
 export function InstructorSessions() {
-  const { user } = useAuth();
-  const { data, error, loading, reload } = useResource(
-    user ? `instructor-sessions:${user.id}` : null,
+  const { data, error, loading, reload } = useAccountResource(
+    "instructor-sessions",
     (signal) => api.instructor.listSessions(signal),
   );
   const [tab, setTab] = useState("upcoming");

@@ -30,7 +30,8 @@ import {
   formatWeekRange,
   localDateKey,
 } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { plural } from "@/lib/format";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { SlotOption, WeeklyAvailability } from "@/lib/types";
 
 type Mode = "available" | "unavailable";
@@ -67,7 +68,7 @@ export function AvailabilityWizard() {
   const [stepError, setStepError] = useState<string | null>(null);
   const [confirmedWeek, setConfirmedWeek] = useState<string | null>(null);
 
-  const { data, error, loading, refreshing, reload } = useResource(
+  const { data, error, loading, refreshing, reload } = useAccountResource(
     `availability:${weekStart ?? "open"}`,
     (signal) => api.availability.get(weekStart, signal),
   );
@@ -361,7 +362,7 @@ export function AvailabilityWizard() {
                   ) : (
                     <div className="rounded-2xl bg-sand-50 p-5">
                       <p className="font-semibold text-forest-900">
-                        {current.selected.length} horário(s) na semana de {formatWeekRange(data.weekStart)}
+                        {plural(current.selected.length, "horário")} na semana de {formatWeekRange(data.weekStart)}
                       </p>
                       <ul className="mt-4 space-y-2.5">
                         {current.selected

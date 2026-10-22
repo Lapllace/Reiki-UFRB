@@ -61,7 +61,7 @@ export function EnrollmentCard({ enrollment, onChanged, featured }: EnrollmentCa
       <div className="flex flex-wrap items-center justify-between gap-3">
         <EnrollmentBadge status={enrollment.status} />
         {dayLabel ? (
-          <span className="text-sm font-semibold capitalize text-forest-700">{dayLabel}</span>
+          <span className="capitalize-first text-sm font-semibold text-forest-700">{dayLabel}</span>
         ) : null}
       </div>
 

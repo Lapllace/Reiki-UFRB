@@ -15,10 +15,10 @@ import {
 import { PageHeader } from "@/components/ui/section";
 import { EmptyState, ErrorState, LoadingBlock } from "@/components/ui/states";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { AuditEventKind } from "@/lib/types";
 
 const kinds: Record<AuditEventKind, { label: string; icon: LucideIcon; tone: string }> = {
@@ -32,10 +32,9 @@ const kinds: Record<AuditEventKind, { label: string; icon: LucideIcon; tone: str
 };
 
 export function CoordinationHistory() {
-  const { user } = useAuth();
   const [filter, setFilter] = useState<AuditEventKind | "all">("all");
-  const { data, error, loading, reload } = useResource(
-    user ? `events:${user.id}` : null,
+  const { data, error, loading, reload } = useAccountResource(
+    "events",
     (signal) => api.coordination.listEvents(signal),
   );
 

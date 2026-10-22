@@ -16,10 +16,11 @@ import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/section";
 import { ErrorState, LoadingBlock } from "@/components/ui/states";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth/auth-context";
+
 import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/dates";
-import { useResource } from "@/lib/hooks/use-resource";
+import { plural } from "@/lib/format";
+import { useAccountResource } from "@/lib/hooks/use-account-resource";
 import type { AvailabilityStatus, CyclePhase, WeeklyCycle } from "@/lib/types";
 import { useWeekSelection, WeekSwitcher } from "./week-switcher";
 
@@ -86,12 +87,11 @@ function PhaseTracker({ cycle }: { cycle: WeeklyCycle }) {
 }
 
 export function CoordinationOverview() {
-  const { user } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
   const { current, week } = useWeekSelection(selected);
 
-  const { data, error, loading, reload } = useResource(
-    user && week ? `cycle:${user.id}:${week}` : null,
+  const { data, error, loading, reload } = useAccountResource(
+    week ? `cycle:${week}` : null,
     (signal) => api.coordination.getCycle(week as string, signal),
   );
 
@@ -138,7 +138,7 @@ export function CoordinationOverview() {
           {data.totals.uncovered > 0 ? (
             <Alert
               tone="danger"
-              title={`${data.totals.uncovered} sessão(ões) sem substituto`}
+              title={`${plural(data.totals.uncovered, "sessão", "sessões")} sem substituto`}
               action={
                 <Link href="/coordenacao/coberturas" className="inline-flex items-center gap-1.5 text-sm font-semibold text-clay-700 underline underline-offset-4">
                   Ver coberturas <ArrowRight className="size-4" aria-hidden />
@@ -151,7 +151,7 @@ export function CoordinationOverview() {
           {data.totals.pendingReallocations > 0 ? (
             <Alert
               tone="info"
-              title={`${data.totals.pendingReallocations} reorganização(ões) aguardando decisão`}
+              title={`${plural(data.totals.pendingReallocations, "reorganização", "reorganizações")} aguardando decisão`}
               action={
                 <Link href="/coordenacao/reorganizacao" className="inline-flex items-center gap-1.5 text-sm font-semibold text-lavender-700 underline underline-offset-4">
                   Gerenciar reorganização <ArrowRight className="size-4" aria-hidden />
@@ -234,7 +234,7 @@ export function CoordinationOverview() {
                             {row.submittedAt
                               ? `Registrou em ${formatDateTime(row.submittedAt)}`
                               : "Ainda não registrou"}
-                            {row.status === "published" ? ` · ${row.sessionsOffered} horário(s)` : ""}
+                            {row.status === "published" ? ` · ${plural(row.sessionsOffered, "horário")}` : ""}
                           </p>
                         </div>
                       </div>
