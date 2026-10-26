@@ -1,10 +1,13 @@
 """Fase 4: reorganização, prioridade futura e sessões extras."""
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.core.security import hash_password
 from app.models.location import Location
@@ -255,5 +258,107 @@ def test_api_extra_session_and_reallocation_are_camel_case(client: TestClient, d
 
 
 @pytest.mark.postgres_pending
-def test_apply_race_one_wins() -> None:
-    pytest.skip("Requer PostgreSQL real para bloquear o caso e a última vaga.")
+def test_apply_race_one_wins(postgres_db, postgres_session_factory) -> None:
+    origin, _participant_one, _enrollment_one, _case_one = _uncovered_case(postgres_db)
+    participant_two = _participant(postgres_db)
+    phase2_service.create_enrollment(postgres_db, participant_two, origin.id)
+    postgres_db.commit()
+    cases = phase4_service.create_cases_for_uncovered_session(postgres_db, origin.id)
+    postgres_db.commit()
+    location = Location(name=f"Race {uuid.uuid4().hex[:6]}", is_active=True)
+    postgres_db.add(location)
+    postgres_db.flush()
+    target = ReikiSession(
+        location_id=location.id,
+        starts_at=datetime.now(UTC) + timedelta(days=4),
+        ends_at=datetime.now(UTC) + timedelta(days=4, hours=1),
+        capacity=1,
+        status=SessionStatus.OPEN,
+        is_extra=True,
+    )
+    postgres_db.add(target)
+    postgres_db.commit()
+    case_ids = [case.id for case in cases]
+    target_id = target.id
+    barrier = Barrier(2)
+
+    def attempt(case_id):
+        db = postgres_session_factory()
+        try:
+            barrier.wait(timeout=10)
+            coordinator = _coordinator(db)
+            result = phase4_service.apply_reallocation(
+                db, coordinator, case_id,
+                alternative=ReallocationAlternative.EXTRA_SESSION,
+                target_session_id=target_id,
+            )
+            db.commit()
+            return result.status
+        except Exception as exc:
+            db.rollback()
+            return exc
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt, case_ids))
+    assert sum(result == ReallocationStatus.APPLIED for result in results) == 1
+    assert sum(isinstance(result, phase4_service.ReallocationError) for result in results) == 1
+    assert postgres_db.query(Enrollment).filter(
+        Enrollment.session_id == target_id,
+        Enrollment.status == EnrollmentStatus.CONFIRMED,
+    ).count() == 1
+    assert postgres_db.query(ReallocationCase).filter(
+        ReallocationCase.status == ReallocationStatus.APPLIED
+    ).count() == 1
+
+
+@pytest.mark.postgres_pending
+def test_create_cases_race_is_unique(postgres_db, postgres_session_factory) -> None:
+    session_row, owner, _extras = _owned_session(postgres_db)
+    participant = _participant(postgres_db)
+    enrollment = phase2_service.create_enrollment(postgres_db, participant, session_row.id)
+    request = cover_service.cancel_session(postgres_db, owner, session_row.id, "imprevisto")
+    request.invites.clear()
+    request.status = "uncovered"
+    session_row.status = SessionStatus.UNCOVERED
+    postgres_db.commit()
+    enrollment_id = enrollment.id
+    session_id = session_row.id
+    barrier = Barrier(2)
+
+    def attempt(_):
+        db = postgres_session_factory()
+        try:
+            barrier.wait(timeout=10)
+            cases = phase4_service.create_cases_for_uncovered_session(db, session_id)
+            db.commit()
+            return cases[0].id
+        except Exception as exc:
+            db.rollback()
+            return exc
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt, range(2)))
+    assert all(not isinstance(result, Exception) for result in results)
+    assert len(set(results)) == 1
+    assert postgres_db.query(ReallocationCase).filter(
+        ReallocationCase.origin_enrollment_id == enrollment_id
+    ).count() == 1
+
+
+@pytest.mark.postgres_pending
+def test_invalid_reallocation_fk_rejected(postgres_db) -> None:
+    session_row, participant, _enrollment, _case = _uncovered_case(postgres_db)
+    invalid = Enrollment(
+        session_id=session_row.id,
+        participant_id=participant.id,
+        reallocation_id=uuid.uuid4(),
+        status=EnrollmentStatus.CANCELLED,
+    )
+    postgres_db.add(invalid)
+    with pytest.raises(IntegrityError):
+        postgres_db.commit()
+    postgres_db.rollback()

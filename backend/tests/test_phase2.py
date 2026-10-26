@@ -5,10 +5,12 @@ migração real. Marcados com pytest.mark.postgres_pending.
 """
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import inspect, select
+from sqlalchemy.exc import IntegrityError
 
 from app.models.cycle import CyclePhase, WeeklyCycle
 from app.models.location import Location
@@ -276,13 +278,62 @@ def test_enrollment_in_scheduled_session_rejected(db) -> None:
 
 
 @pytest.mark.postgres_pending
-def test_concurrent_enrollment_no_double_booking() -> None:
-    """PENDENTE PostgreSQL: inscrições simultâneas devem serializar via
-    FOR UPDATE e o índice parcial único. SQLite não valida bloqueios."""
-    pytest.skip("Requer PostgreSQL real (locks e índice parcial).")
+def test_concurrent_enrollment_no_double_booking(postgres_db, postgres_session_factory) -> None:
+    session_row = _make_session(postgres_db, capacity=1)
+    participants = [_make_participant(postgres_db, n=i) for i in range(2)]
+    participant_ids = [item.id for item in participants]
+    postgres_db.commit()
+    barrier = __import__("threading").Barrier(2)
+
+    def attempt(participant_id):
+        db = postgres_session_factory()
+        try:
+            barrier.wait(timeout=10)
+            participant = db.get(User, participant_id)
+            enrollment = phase2_service.create_enrollment(db, participant, session_row.id)
+            db.commit()
+            return enrollment.status
+        except Exception as exc:
+            db.rollback()
+            return exc
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt, participant_ids))
+    assert all(not isinstance(result, Exception) for result in results)
+    rows = postgres_db.scalars(
+        select(Enrollment).where(Enrollment.session_id == session_row.id)
+    ).all()
+    assert sum(row.status == EnrollmentStatus.CONFIRMED for row in rows) == 1
+    assert sum(row.status == EnrollmentStatus.WAITLISTED for row in rows) == 1
+    assert sorted(row.waitlist_position for row in rows if row.status == EnrollmentStatus.WAITLISTED) == [1]
+    confirmed = next(row for row in rows if row.status == EnrollmentStatus.CONFIRMED)
+    confirmed_participant = postgres_db.get(User, confirmed.participant_id)
+    phase2_service.cancel_enrollment(postgres_db, confirmed_participant, confirmed.id)
+    postgres_db.commit()
+    promoted = postgres_db.scalars(
+        select(Enrollment).where(Enrollment.session_id == session_row.id)
+    ).all()
+    assert sum(row.status == EnrollmentStatus.CONFIRMED for row in promoted) == 1
+    assert sum(row.status == EnrollmentStatus.WAITLISTED for row in promoted) == 0
 
 
 @pytest.mark.postgres_pending
-def test_partial_unique_index_enforced() -> None:
-    """PENDENTE PostgreSQL: unicidade parcial não é imposta por SQLite."""
-    pytest.skip("Requer PostgreSQL real (índice parcial).")
+def test_partial_unique_index_enforced(postgres_db) -> None:
+    session_row = _make_session(postgres_db, capacity=2)
+    participant = _make_participant(postgres_db)
+    first = phase2_service.create_enrollment(postgres_db, participant, session_row.id)
+    postgres_db.commit()
+    duplicate = Enrollment(
+        session_id=session_row.id,
+        participant_id=participant.id,
+        status=EnrollmentStatus.CONFIRMED,
+    )
+    postgres_db.add(duplicate)
+    with pytest.raises(IntegrityError):
+        postgres_db.commit()
+    postgres_db.rollback()
+    assert postgres_db.get(Enrollment, first.id) is not None
+    indexes = inspect(postgres_db.bind).get_indexes("enrollments")
+    assert any(item["name"] == "uq_enrollments_session_participant_active" for item in indexes)

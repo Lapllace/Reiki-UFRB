@@ -6,9 +6,12 @@ marcada `postgres_pending` e SKIPPED sem TEST_DATABASE_URL.
 """
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.models.phase2 import Enrollment, EnrollmentStatus
@@ -291,14 +294,76 @@ def test_api_participant_forbidden(client: TestClient, db) -> None:
 
 
 @pytest.mark.postgres_pending
-def test_accept_race_only_one_wins() -> None:
-    """PENDENTE PostgreSQL: dois aceites simultâneos — apenas um vence,
-    via FOR UPDATE da solicitação e da sessão na mesma transação."""
-    pytest.skip("Requer PostgreSQL real (locks de linha).")
+def test_accept_race_only_one_wins(postgres_db, postgres_session_factory) -> None:
+    session_row, owner, _extras = _owned_session(postgres_db, extra_instructors=2)
+    participant = _make_participant(postgres_db)
+    phase2_service.create_enrollment(postgres_db, participant, session_row.id)
+    request = cover_service.cancel_session(postgres_db, owner, session_row.id, "imprevisto")
+    postgres_db.commit()
+    invites = postgres_db.query(CoverInvite).filter(
+        CoverInvite.request_id == request.id
+    ).all()
+    invite_ids = [invite.id for invite in invites[:2]]
+    invited_users = {invite.id: invite.invited_instructor_id for invite in invites}
+    barrier = Barrier(2)
+
+    def attempt(invite_id):
+        db = postgres_session_factory()
+        try:
+            barrier.wait(timeout=10)
+            instructor = db.get(User, invited_users[invite_id])
+            outcome, _invite = cover_service.accept_invite(db, instructor, invite_id)
+            db.commit()
+            return outcome
+        except Exception as exc:
+            db.rollback()
+            return exc
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(attempt, invite_ids))
+    assert sorted(outcomes) == ["accepted", "already_taken"]
+    refreshed = postgres_db.scalars(
+        select(CoverRequest).where(CoverRequest.id == request.id)
+    ).one()
+    assert refreshed.status == CoverRequestStatus.COVERED
+    assert postgres_db.query(CoverInvite).filter(
+        CoverInvite.status == CoverInviteStatus.ACCEPTED
+    ).count() == 1
+    assert postgres_db.query(Enrollment).filter(
+        Enrollment.session_id == session_row.id
+    ).count() == 1
 
 
 @pytest.mark.postgres_pending
-def test_cancel_race_single_request() -> None:
-    """PENDENTE PostgreSQL: dois cancelamentos simultâneos — apenas uma
-    solicitação criada (UNIQUE em session_id + lock)."""
-    pytest.skip("Requer PostgreSQL real (locks e constraint).")
+def test_cancel_race_single_request(postgres_db, postgres_session_factory) -> None:
+    session_row, owner, _extras = _owned_session(postgres_db, extra_instructors=1)
+    owner_id = owner.id
+    session_id = session_row.id
+    barrier = Barrier(2)
+
+    def attempt(_):
+        db = postgres_session_factory()
+        try:
+            barrier.wait(timeout=10)
+            instructor = db.get(User, owner_id)
+            request = cover_service.cancel_session(db, instructor, session_id, "imprevisto")
+            db.commit()
+            return request.id
+        except Exception as exc:
+            db.rollback()
+            return exc
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt, range(2)))
+    assert all(not isinstance(result, Exception) for result in results)
+    assert len(set(results)) == 1
+    assert postgres_db.query(CoverRequest).filter(
+        CoverRequest.session_id == session_id
+    ).count() == 1
+    assert postgres_db.query(Enrollment).filter(
+        Enrollment.session_id == session_id
+    ).count() == 1
