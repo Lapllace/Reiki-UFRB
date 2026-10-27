@@ -3,10 +3,10 @@ name: Backend CI
 on:
   push:
     branches: ["feat/backend-foundation", "main"]
-    paths: ["backend/**"]
+    paths: ["backend/**", ".github/workflows/**"]
   pull_request:
     branches: ["feat/backend-foundation", "main"]
-    paths: ["backend/**"]
+    paths: ["backend/**", ".github/workflows/**"]
 
 jobs:
   # ──────────────────────────────────────────────
