@@ -235,8 +235,9 @@ def create_enrollment(db: Session, participant: User, session_id: uuid.UUID) -> 
     from app.models.session_week import ReikiSession
 
     # Lock pessimista da sessão: decisões de vaga são serializadas.
+    # of=ReikiSession evita bloquear relacionamentos joined nullable (instructor, cycle).
     session_row = db.execute(
-        select(ReikiSession).where(ReikiSession.id == session_id).with_for_update()
+        select(ReikiSession).where(ReikiSession.id == session_id).with_for_update(of=ReikiSession)
     ).scalar_one_or_none()
     if session_row is None:
         raise EnrollmentError("session_not_found", "Sessão não encontrada.")
@@ -355,6 +356,8 @@ def _was_confirmed(db: Session, enrollment: Enrollment) -> bool:
 
 
 def _promote_next_from_waitlist(db: Session, session_row) -> None:
+    # Lock pessimista da inscrição selecionada da fila.
+    # of=Enrollment evita bloquear relacionamentos joined nullable.
     next_wait = db.scalar(
         select(Enrollment)
         .where(
@@ -363,7 +366,7 @@ def _promote_next_from_waitlist(db: Session, session_row) -> None:
         )
         .order_by(Enrollment.waitlist_position)
         .limit(1)
-        .with_for_update()
+        .with_for_update(of=Enrollment)
     )
     if next_wait is None:
         if session_row.status == "full":

@@ -130,8 +130,10 @@ def apply_reallocation(
 ) -> ReallocationCase:
     if coordinator.role != Role.COORDINATOR:
         raise ReallocationError("forbidden", "Apenas a coordenação pode aplicar reorganizações.")
+    # Lock pessimista do caso de reorganização.
+    # of=ReallocationCase evita bloquear relacionamentos joined nullable.
     case = db.execute(
-        select(ReallocationCase).where(ReallocationCase.id == case_id).with_for_update()
+        select(ReallocationCase).where(ReallocationCase.id == case_id).with_for_update(of=ReallocationCase)
     ).scalar_one_or_none()
     if case is None:
         raise ReallocationError("not_found", "Caso de reorganização não encontrado.")
@@ -152,8 +154,10 @@ def apply_reallocation(
 
     if target_session_id is None:
         raise ReallocationError("target_required", "Informe a sessão extra de destino.")
+    # Lock pessimista da sessão extra de destino.
+    # of=ReikiSession evita bloquear relacionamentos joined nullable (instructor, cycle).
     target = db.execute(
-        select(ReikiSession).where(ReikiSession.id == target_session_id).with_for_update()
+        select(ReikiSession).where(ReikiSession.id == target_session_id).with_for_update(of=ReikiSession)
     ).scalar_one_or_none()
     if target is None:
         raise ReallocationError("target_not_found", "Sessão de destino não encontrada.")
@@ -208,8 +212,10 @@ def dismiss_reallocation(
 ) -> ReallocationCase:
     if coordinator.role != Role.COORDINATOR:
         raise ReallocationError("forbidden", "Apenas a coordenação pode dispensar reorganizações.")
+    # Lock pessimista do caso de reorganização.
+    # of=ReallocationCase evita bloquear relacionamentos joined nullable.
     case = db.execute(
-        select(ReallocationCase).where(ReallocationCase.id == case_id).with_for_update()
+        select(ReallocationCase).where(ReallocationCase.id == case_id).with_for_update(of=ReallocationCase)
     ).scalar_one_or_none()
     if case is None:
         raise ReallocationError("not_found", "Caso de reorganização não encontrado.")

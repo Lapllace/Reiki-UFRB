@@ -32,14 +32,18 @@ class CoverError(Exception):
 
 
 def _lock_session(db: Session, session_id: uuid.UUID) -> ReikiSession | None:
+    # Lock pessimista da sessão para cancelamento/cobertura.
+    # of=ReikiSession evita bloquear relacionamentos joined nullable (instructor, cycle).
     stmt = (
-        select(ReikiSession).where(ReikiSession.id == session_id).with_for_update()
+        select(ReikiSession).where(ReikiSession.id == session_id).with_for_update(of=ReikiSession)
     )
     return db.execute(stmt).scalar_one_or_none()
 
 
 def _lock_request(db: Session, request_id: uuid.UUID) -> CoverRequest | None:
-    stmt = select(CoverRequest).where(CoverRequest.id == request_id).with_for_update()
+    # Lock pessimista da solicitação de cobertura.
+    # of=CoverRequest por consistência (embora não tenha relacionamentos joined nullable).
+    stmt = select(CoverRequest).where(CoverRequest.id == request_id).with_for_update(of=CoverRequest)
     return db.execute(stmt).scalar_one_or_none()
 
 
@@ -146,7 +150,9 @@ def accept_invite(
 
     Retorna (outcome, invite): outcome ∈ {accepted, already_taken, expired}.
     """
-    stmt = select(CoverInvite).where(CoverInvite.id == invite_id).with_for_update()
+    # Lock pessimista do convite para garantir o primeiro aceite.
+    # of=CoverInvite evita bloquear relacionamentos joined nullable.
+    stmt = select(CoverInvite).where(CoverInvite.id == invite_id).with_for_update(of=CoverInvite)
     invite = db.execute(stmt).scalar_one_or_none()
     if invite is None or invite.invited_instructor_id != instructor.id:
         raise CoverError("not_found", "Convite não encontrado.")
@@ -205,7 +211,9 @@ def decline_invite(
     Operação transacional: bloqueia a solicitação para evitar corrida com
     um aceite simultâneo.
     """
-    stmt = select(CoverInvite).where(CoverInvite.id == invite_id).with_for_update()
+    # Lock pessimista do convite para evitar corrida com aceite simultâneo.
+    # of=CoverInvite evita bloquear relacionamentos joined nullable.
+    stmt = select(CoverInvite).where(CoverInvite.id == invite_id).with_for_update(of=CoverInvite)
     invite = db.execute(stmt).scalar_one_or_none()
     if invite is None or invite.invited_instructor_id != instructor.id:
         raise CoverError("not_found", "Convite não encontrado.")
