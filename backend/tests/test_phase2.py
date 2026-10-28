@@ -63,7 +63,7 @@ def test_submit_availability(db) -> None:
     sub = phase2_service.submit_availability(
         db, instr, WS, unavailable=False, entries=_entries()
     )
-    assert sub.status.value == "submitted"
+    assert sub.status == "submitted"
     assert len(sub.entries) == 2
     # Upsert: submeter de novo atualiza em vez de duplicar.
     sub2 = phase2_service.submit_availability(
@@ -80,7 +80,7 @@ def test_declare_unavailable(db) -> None:
     sub = phase2_service.submit_availability(
         db, instr, WS, unavailable=True, entries=[]
     )
-    assert sub.status.value == "unavailable"
+    assert sub.status == "unavailable"
     assert sub.entries == []
 
 
@@ -92,7 +92,7 @@ def test_duplicate_submission_same_week_upserts(db) -> None:
     phase2_service.submit_availability(db, instr, WS, unavailable=True, entries=[])
     rows = db.query(WeeklyAvailability).all()
     assert len(rows) == 1
-    assert rows[0].status.value == "unavailable"
+    assert rows[0].status == "unavailable"
 
 
 def test_invalid_entries_rejected(db) -> None:

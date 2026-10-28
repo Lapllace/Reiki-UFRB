@@ -76,7 +76,7 @@ def test_uncovered_flow_creates_case_without_manual_transfer(db) -> None:
     phase2_service.create_enrollment(db, participant, session.id)
     db.commit()
     request = cover_service.cancel_session(db, owner, session.id)
-    assert request.status.value == "uncovered"
+    assert request.status == "uncovered"
     assert db.query(ReallocationCase).filter(
         ReallocationCase.origin_session_id == session.id
     ).count() == 1
@@ -259,16 +259,9 @@ def test_api_extra_session_and_reallocation_are_camel_case(client: TestClient, d
 
 @pytest.mark.postgres_pending
 def test_apply_race_one_wins(postgres_db, postgres_session_factory) -> None:
-    origin, owner, _extras = _owned_session(postgres_db)
-    participant_one = _participant(postgres_db)
-    phase2_service.create_enrollment(postgres_db, participant_one, origin.id)
+    origin, _participant_one, _enrollment_one, _case_one = _uncovered_case(postgres_db)
     participant_two = _participant(postgres_db)
     phase2_service.create_enrollment(postgres_db, participant_two, origin.id)
-    postgres_db.commit()
-    request = cover_service.cancel_session(postgres_db, owner, origin.id)
-    request.invites.clear()
-    request.status = "uncovered"
-    origin.status = SessionStatus.UNCOVERED
     postgres_db.commit()
     cases = phase4_service.create_cases_for_uncovered_session(postgres_db, origin.id)
     postgres_db.commit()
