@@ -343,6 +343,11 @@ def test_accept_race_only_one_wins(postgres_db, postgres_session_factory) -> Non
 @pytest.mark.postgres_pending
 def test_cancel_race_single_request(postgres_db, postgres_session_factory) -> None:
     session_row, owner, _extras = _owned_session(postgres_db, extra_instructors=1)
+    # A inscrição precisa existir ANTES da corrida: o teste verifica que ela é
+    # preservada (1 inscrição) e que só uma solicitação de cobertura é criada.
+    participant = _make_participant(postgres_db)
+    phase2_service.create_enrollment(postgres_db, participant, session_row.id)
+    postgres_db.commit()
     owner_id = owner.id
     session_id = session_row.id
     barrier = Barrier(2)
