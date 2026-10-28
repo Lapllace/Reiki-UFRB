@@ -173,6 +173,14 @@ def postgres_engine(test_database_url: str) -> Generator[Engine, None, None]:
 def postgres_session_factory(postgres_engine: Engine):
     factory = sessionmaker(bind=postgres_engine, expire_on_commit=False)
     with postgres_engine.begin() as conn:
+        # enrollments.reallocation_id → reallocation_cases.id usa ondelete=RESTRICT.
+        # reallocation_cases.origin_enrollment_id → enrollments.id usa ondelete=CASCADE.
+        # Esse ciclo impede o DELETE em cascata normal: o PostgreSQL rejeita apagar
+        # reallocation_cases enquanto alguma enrollment ainda referencia o caso via
+        # fk_enrollments_reallocation_id.
+        # Anulamos reallocation_id antes da limpeza geral para quebrar o ciclo.
+        # A FK permanece intacta — apenas os dados de teste são descartados.
+        conn.execute(text("UPDATE enrollments SET reallocation_id = NULL WHERE reallocation_id IS NOT NULL"))
         for table in reversed(Base.metadata.sorted_tables):
             if table.name != "alembic_version":
                 conn.execute(delete(table))

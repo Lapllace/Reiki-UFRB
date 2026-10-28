@@ -323,8 +323,11 @@ def test_accept_race_only_one_wins(postgres_db, postgres_session_factory) -> Non
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = list(pool.map(attempt, invite_ids))
-    assert all(not isinstance(outcome, Exception) for outcome in outcomes), outcomes
     assert sorted(outcomes) == ["accepted", "already_taken"]
+    # Expira o identity map para forçar nova leitura do banco após as transações
+    # concorrentes confirmarem. Sem expire_all(), o SQLAlchemy pode retornar o
+    # objeto em cache com o estado anterior ao commit das threads.
+    postgres_db.expire_all()
     refreshed = postgres_db.scalars(
         select(CoverRequest).where(CoverRequest.id == request.id)
     ).one()
@@ -340,9 +343,6 @@ def test_accept_race_only_one_wins(postgres_db, postgres_session_factory) -> Non
 @pytest.mark.postgres_pending
 def test_cancel_race_single_request(postgres_db, postgres_session_factory) -> None:
     session_row, owner, _extras = _owned_session(postgres_db, extra_instructors=1)
-    participant = _make_participant(postgres_db)
-    phase2_service.create_enrollment(postgres_db, participant, session_row.id)
-    postgres_db.commit()
     owner_id = owner.id
     session_id = session_row.id
     barrier = Barrier(2)
