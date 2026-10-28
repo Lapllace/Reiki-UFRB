@@ -150,23 +150,27 @@ def accept_invite(
 
     Retorna (outcome, invite): outcome ∈ {accepted, already_taken, expired}.
     """
-    # Lock pessimista do convite para garantir o primeiro aceite.
-    # of=CoverInvite evita bloquear relacionamentos joined nullable.
+    invite = db.scalar(select(CoverInvite).where(CoverInvite.id == invite_id))
+    if invite is None or invite.invited_instructor_id != instructor.id:
+        raise CoverError("not_found", "Convite não encontrado.")
+
+    # Todos os caminhos de decisão bloqueiam primeiro a solicitação e depois
+    # o convite, evitando que a atualização dos demais convites forme ciclo.
+    request = _lock_request(db, invite.request_id)
+    if request is None:
+        raise CoverError("request_closed", "Solicitação não está mais aberta.")
+
     stmt = select(CoverInvite).where(CoverInvite.id == invite_id).with_for_update(of=CoverInvite)
     invite = db.execute(stmt).scalar_one_or_none()
     if invite is None or invite.invited_instructor_id != instructor.id:
         raise CoverError("not_found", "Convite não encontrado.")
-
     if invite.status == CoverInviteStatus.TAKEN:
         return "already_taken", invite
     if invite.status == CoverInviteStatus.EXPIRED:
         return "expired", invite
     if invite.status != CoverInviteStatus.PENDING:
         raise CoverError("not_pending", "Convite não está mais aberto.")
-
-    request = _lock_request(db, invite.request_id)
-    if request is None or request.status != CoverRequestStatus.OPEN:
-        # Solicitação resolvida depois que o convite foi emitido.
+    if request.status != CoverRequestStatus.OPEN:
         invite.status = CoverInviteStatus.TAKEN
         invite.resolved_at = datetime.now(UTC)
         return "already_taken", invite
@@ -211,17 +215,23 @@ def decline_invite(
     Operação transacional: bloqueia a solicitação para evitar corrida com
     um aceite simultâneo.
     """
-    # Lock pessimista do convite para evitar corrida com aceite simultâneo.
-    # of=CoverInvite evita bloquear relacionamentos joined nullable.
+    invite = db.scalar(select(CoverInvite).where(CoverInvite.id == invite_id))
+    if invite is None or invite.invited_instructor_id != instructor.id:
+        raise CoverError("not_found", "Convite não encontrado.")
+
+    # A solicitação é sempre bloqueada antes do convite, como em
+    # accept_invite(), para evitar deadlocks entre decisões concorrentes.
+    request = _lock_request(db, invite.request_id)
+    if request is None:
+        raise CoverError("request_closed", "Solicitação não está mais aberta.")
+
     stmt = select(CoverInvite).where(CoverInvite.id == invite_id).with_for_update(of=CoverInvite)
     invite = db.execute(stmt).scalar_one_or_none()
     if invite is None or invite.invited_instructor_id != instructor.id:
         raise CoverError("not_found", "Convite não encontrado.")
     if invite.status != CoverInviteStatus.PENDING:
         raise CoverError("not_pending", "Convite não está mais aberto.")
-
-    request = _lock_request(db, invite.request_id)
-    if request is None or request.status != CoverRequestStatus.OPEN:
+    if request.status != CoverRequestStatus.OPEN:
         raise CoverError("request_closed", "Solicitação não está mais aberta.")
 
     invite.status = CoverInviteStatus.DECLINED
