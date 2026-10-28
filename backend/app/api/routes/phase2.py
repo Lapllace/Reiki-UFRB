@@ -54,7 +54,7 @@ def _availability_out(db: Session, instructor_id: uuid.UUID, ws: date) -> Weekly
     return WeeklyAvailabilityOut(
         week_start=ws.isoformat(),
         week_end=(ws + timedelta(days=6)).isoformat(),
-        status=AvailabilityStatus(sub.status.value),
+        status=AvailabilityStatus(sub.status),
         can_edit=can_edit,
         locked_reason=None if can_edit else "Submissão fechada para este ciclo.",
         submitted_at=sub.submitted_at,
@@ -62,7 +62,7 @@ def _availability_out(db: Session, instructor_id: uuid.UUID, ws: date) -> Weekly
         entries=[
             AvailabilityEntryOut(
                 id=e.id,
-                kind=AvailabilityEntryKind(e.kind.value),
+                kind=AvailabilityEntryKind(e.kind),
                 starts_at=e.starts_at,
                 ends_at=e.ends_at,
                 location_id=e.location_id,

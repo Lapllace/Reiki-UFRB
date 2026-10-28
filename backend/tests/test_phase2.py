@@ -18,6 +18,7 @@ from app.models.phase2 import Enrollment, EnrollmentStatus, WeeklyAvailability
 from app.models.session_week import ReikiSession, SessionStatus
 from app.models.user import Role, User
 from app.services import phase2_service
+from tests.test_auth import PASSWORD
 
 WS = date(2026, 10, 26)  # segunda-feira
 
@@ -54,6 +55,81 @@ def _entries(days=2):
 
 
 # ------------------------- Disponibilidade -------------------------
+
+
+def _utc_timestamp(value: str | datetime, fallback_tz: timezone | None = None) -> datetime:
+    if isinstance(value, str):
+        parsed = datetime.fromisoformat(value)
+    else:
+        parsed = value
+    if parsed.tzinfo is None:
+        if fallback_tz is not None:
+            parsed = parsed.replace(tzinfo=fallback_tz)
+        else:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def test_availability_api_contract_round_trip(client, db, make_user) -> None:
+    instructor = make_user(role=Role.INSTRUCTOR, password=PASSWORD)
+    today = date.today()
+    week_start = phase2_service.week_start_of(today) + timedelta(days=7)
+    db.add(
+        WeeklyCycle(
+            week_start=week_start,
+            phase=CyclePhase.COLLECTING_AVAILABILITY,
+        )
+    )
+    db.commit()
+
+    login_response = client.post(
+        "/auth/login",
+        json={"email": instructor.email, "password": PASSWORD},
+    )
+    assert login_response.status_code == 200, login_response.text
+
+    starts_at = datetime.combine(
+        week_start + timedelta(days=1),
+        datetime.min.time().replace(hour=14),
+        tzinfo=timezone(timedelta(hours=-3)),
+    )
+    ends_at = starts_at + timedelta(hours=1)
+    payload = {
+        "week_start": week_start.isoformat(),
+        "unavailable": False,
+        "entries": [
+            {
+                "starts_at": starts_at.isoformat(),
+                "ends_at": ends_at.isoformat(),
+                "location_id": None,
+                "note": "Disponibilidade no período da tarde.",
+            }
+        ],
+    }
+
+    post_response = client.post("/instructor/availability", json=payload)
+    assert post_response.status_code == 200, post_response.text
+    post_body = post_response.json()
+    assert post_body["weekStart"] == week_start.isoformat()
+    assert post_body["status"] == "submitted"
+    assert post_body["entries"][0]["kind"] == "available"
+    assert _utc_timestamp(post_body["entries"][0]["startsAt"], starts_at.tzinfo) == _utc_timestamp(starts_at)
+    assert _utc_timestamp(post_body["entries"][0]["endsAt"], ends_at.tzinfo) == _utc_timestamp(ends_at)
+    assert post_body["entries"][0]["locationId"] is None
+
+    get_response = client.get(
+        "/instructor/availability",
+        params={"weekStart": week_start.isoformat()},
+    )
+    assert get_response.status_code == 200, get_response.text
+    get_body = get_response.json()
+    assert get_body["weekStart"] == week_start.isoformat()
+    assert get_body["status"] == "submitted"
+    assert len(get_body["entries"]) == 1
+    assert get_body["entries"][0]["kind"] == "available"
+    assert _utc_timestamp(get_body["entries"][0]["startsAt"], starts_at.tzinfo) == _utc_timestamp(starts_at)
+    assert _utc_timestamp(get_body["entries"][0]["endsAt"], ends_at.tzinfo) == _utc_timestamp(ends_at)
+    assert get_body["entries"][0]["locationId"] is None
 
 
 def test_submit_availability(db) -> None:
