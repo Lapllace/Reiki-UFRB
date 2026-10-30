@@ -10,6 +10,7 @@ import type {
   CoverRequest,
   Enrollment,
   EnrollmentResult,
+  CancelSessionResult,
   InstructorSession,
   Location,
   Reallocation,
@@ -20,11 +21,7 @@ import type {
   WeeklyCycle,
 } from "@/lib/types";
 
-/**
- * Implementação HTTP real. Os formatos de requisição/resposta aqui descritos
- * são PROPOSTOS (ver `endpoints.ts` e `types.ts`). Quando o backend definir o
- * contrato, adapte os mapeamentos neste arquivo — o restante do app não muda.
- */
+/** Implementação HTTP real dos contratos FastAPI usados pela interface. */
 export function createRealApi(): ReikiApi {
   return {
     auth: {
@@ -73,8 +70,18 @@ export function createRealApi(): ReikiApi {
         }),
       publish: (input) =>
         apiRequest<WeeklyAvailability>(endpoints.instructor.availability, {
-          method: "PUT",
-          body: input,
+          method: "POST",
+          body: {
+            week_start: input.weekStart,
+            unavailable: input.unavailable,
+            note: input.note,
+            entries: input.entries.map((entry) => ({
+              starts_at: entry.startsAt,
+              ends_at: entry.endsAt,
+              location_id: entry.locationId,
+              note: entry.note,
+            })),
+          },
         }),
     },
     instructor: {
@@ -83,7 +90,7 @@ export function createRealApi(): ReikiApi {
       roster: (sessionId, signal) =>
         apiRequest<RosterEntry[]>(endpoints.instructor.roster(sessionId), { signal }),
       cancelSession: (sessionId, reason) =>
-        apiRequest<InstructorSession>(endpoints.instructor.cancelSession(sessionId), {
+        apiRequest<CancelSessionResult>(endpoints.instructor.cancelSession(sessionId), {
           method: "POST",
           body: { reason },
         }),

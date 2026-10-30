@@ -21,6 +21,12 @@ export interface User {
   role: Role;
 }
 
+export interface CancelSessionResult {
+  coverRequestId: string;
+  status: CoverRequestStatus;
+  sessionId: string;
+}
+
 export interface Location {
   id: string;
   name: string;
@@ -139,34 +145,42 @@ export interface AppNotification {
 /* ----------------------------- Ministrante ------------------------------ */
 
 /** Janela (dia + horário + local) oferecida pela coordenação para o ministrante escolher. */
-export interface SlotOption {
+export type AvailabilityStatus = "pending" | "submitted" | "unavailable";
+
+export type AvailabilityEntryKind = "available" | "unavailable";
+
+export interface AvailabilityEntry {
   id: string;
-  /** Início em ISO 8601. */
+  kind: AvailabilityEntryKind;
   startsAt: string;
   endsAt: string;
-  location: Location;
+  locationId?: string | null;
+  note?: string | null;
 }
-
-export type AvailabilityStatus = "pending" | "published" | "unavailable";
 
 export interface WeeklyAvailability {
   weekStart: string;
   weekEnd: string;
   status: AvailabilityStatus;
-  /** Prazo para registrar, quando definido. */
-  deadline?: string | null;
   /** O servidor informa se o registro está aberto/editável. */
   canEdit: boolean;
   lockedReason?: string | null;
-  options: SlotOption[];
-  selectedSlotIds: string[];
+  submittedAt?: string | null;
+  note?: string | null;
+  entries: AvailabilityEntry[];
 }
 
 export interface PublishAvailabilityInput {
   weekStart: string;
   /** `true` para declarar indisponibilidade na semana inteira. */
   unavailable: boolean;
-  slotIds: string[];
+  note?: string | null;
+  entries: {
+    startsAt: string;
+    endsAt: string;
+    locationId?: string | null;
+    note?: string | null;
+  }[];
 }
 
 export interface RosterEntry {
@@ -186,16 +200,18 @@ export type CoverInviteStatus =
   | "pending"
   | "accepted"
   | "taken"
+  | "declined"
   | "expired"
   | "withdrawn";
 
 export interface CoverInvite {
   id: string;
   status: CoverInviteStatus;
-  session: Session;
+  sessionId?: string;
+  session?: Session | null;
   createdAt: string;
   expiresAt?: string | null;
-  /** Quem assumiu a sessão (quando `taken`). */
+  accepted?: boolean;
   acceptedBy?: InstructorSummary | null;
 }
 
@@ -258,6 +274,7 @@ export interface CoverRequest {
 }
 
 export type ReallocationStatus = "pending" | "applied" | "dismissed";
+export type ReallocationAlternative = "extra_session" | "future_priority";
 
 export interface Reallocation {
   id: string;
@@ -268,11 +285,15 @@ export interface Reallocation {
   /** Sessões candidatas (extras ou de semanas futuras) sugeridas pelo servidor. */
   candidateSessions: Session[];
   appliedTo?: Session | null;
+  alternative?: ReallocationAlternative | null;
+  priorityGrantedAt?: string | null;
   createdAt: string;
+  decidedAt?: string | null;
 }
 
 export interface ApplyReallocationInput {
-  targetSessionId: string;
+  alternative: ReallocationAlternative;
+  targetSessionId?: string | null;
 }
 
 export type AuditEventKind =

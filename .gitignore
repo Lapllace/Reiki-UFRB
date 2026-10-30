@@ -1,0 +1,40 @@
+# Arquivos de verificação de navegador (gerados localmente, não versionados)
+bc-err.txt
+bc-out.txt
+browser-check-err.txt
+browser-check-result.txt
+frontend/browser-check-result.txt
+
+# Variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+htmlcov/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Banco local
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/

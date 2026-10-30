@@ -1,0 +1,123 @@
+name: Backend CI
+
+on:
+  push:
+    branches: ["feat/backend-foundation", "main"]
+    paths: ["backend/**", ".github/workflows/**"]
+  pull_request:
+    branches: ["feat/backend-foundation", "main"]
+    paths: ["backend/**", ".github/workflows/**"]
+
+jobs:
+  unit:
+    name: "Unitários (SQLite)"
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Instalar dependências
+        run: pip install -e ".[dev]"
+      - name: Rodar testes unitários (sem PostgreSQL)
+        run: |
+          python -m pytest -q -rs \
+            --ignore=tests/test_app_health.py \
+            -m "not postgres_pending"
+
+  integration:
+    name: "Integração (PostgreSQL real)"
+    runs-on: ubuntu-24.04
+    needs: unit
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: reiki
+          POSTGRES_PASSWORD: reiki_dev_pass
+          POSTGRES_DB: reiki_test_admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reiki -d reiki_test_admin"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://reiki:reiki_dev_pass@localhost:5432/reiki_test_admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Instalar dependências
+        run: pip install -e ".[dev]"
+
+      - name: Aguardar PostgreSQL ficar pronto
+        run: |
+          python - <<'EOF'
+          import time, psycopg, sys
+          url = "postgresql://reiki:reiki_dev_pass@localhost:5432/reiki_test_admin"
+          for attempt in range(30):
+              try:
+                  with psycopg.connect(url):
+                      print(f"PostgreSQL pronto (tentativa {attempt + 1})")
+                      sys.exit(0)
+              except Exception as exc:
+                  print(f"Tentativa {attempt + 1}/30: {exc}")
+                  time.sleep(2)
+          print("PostgreSQL nao ficou pronto a tempo")
+          sys.exit(1)
+          EOF
+
+      - name: Verificar cadeia de migrações Alembic em banco limpo
+        env:
+          DATABASE_URL: postgresql+psycopg://reiki:reiki_dev_pass@localhost:5432/reiki_test_admin
+        run: |
+          python -m alembic upgrade head
+          python -m alembic current
+          python - <<'EOF'
+          from sqlalchemy import create_engine, text
+          import os, sys
+          url = os.environ["DATABASE_URL"]
+          engine = create_engine(url)
+          with engine.connect() as conn:
+              rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+          expected = "d5e6f7a8b9c0"
+          if rev != expected:
+              print(f"ERRO: revisao atual e '{rev}', esperada '{expected}'")
+              sys.exit(1)
+          print(f"OK: revisao {rev}")
+          EOF
+
+      - name: Rodar todos os testes com PostgreSQL
+        run: |
+          python -m pytest -q -rs \
+            tests/test_app_health.py \
+            tests/test_phase2.py \
+            tests/test_phase3.py \
+            tests/test_phase4.py
+
+      - name: Verificar zero skips
+        run: |
+          output=$(python -m pytest -q --tb=no \
+            tests/test_app_health.py \
+            tests/test_phase2.py \
+            tests/test_phase3.py \
+            tests/test_phase4.py 2>&1)
+          echo "$output"
+          if echo "$output" | grep -qE "[1-9][0-9]* skipped|^1 skipped"; then
+            echo ""
+            echo "ERRO: ainda ha testes ignorados com PostgreSQL configurado."
+            exit 1
+          fi

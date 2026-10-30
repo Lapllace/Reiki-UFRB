@@ -14,6 +14,7 @@ import { plural } from "@/lib/format";
 import type {
   AcceptCoverResult,
   AuditEvent,
+  AvailabilityEntry,
   CoverInvite,
   CoverRequest,
   Enrollment,
@@ -292,7 +293,12 @@ function availabilityRecord(weekStart: string, instructorId: string): Availabili
   const current = store();
   const row = current.availability.get(weekStart);
   return (
-    row?.get(instructorId) ?? { status: "pending", submittedAt: null, selectedSlotIds: [] }
+    row?.get(instructorId) ?? {
+      status: "pending",
+      submittedAt: null,
+      selectedSlotIds: [],
+      entries: [],
+    }
   );
 }
 
@@ -301,40 +307,44 @@ function buildAvailability(weekStart: string): WeeklyAvailability {
   const start = parseISODate(weekStart);
   const record = availabilityRecord(weekStart, MY_INSTRUCTOR_ID);
   const canEdit = offset === OPEN_AVAILABILITY_WEEK_OFFSET;
-  const monday = store().mondayOfThisWeek;
+  const options = AVAILABILITY_TEMPLATES.map((template, index) => {
+    const startsAt = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate() + template.day,
+      template.hour,
+    );
+    return {
+      id: `opt-${weekStart}-${index}`,
+      startsAt: startsAt.toISOString(),
+      endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
+      locationId: template.loc,
+    };
+  });
+  const entries = record.entries.length
+    ? record.entries
+    : options
+        .filter((option) => record.selectedSlotIds.includes(option.id))
+        .map((option) => ({
+          id: option.id,
+          kind: "available" as const,
+          startsAt: option.startsAt,
+          endsAt: option.endsAt,
+          locationId: option.locationId,
+          note: null,
+        }));
   return {
     weekStart,
     weekEnd: toISODate(addDays(start, 6)),
+    entries,
     status: record.status,
-    deadline: canEdit
-      ? new Date(
-          monday.getFullYear(),
-          monday.getMonth(),
-          monday.getDate() + 9,
-          18,
-        ).toISOString()
-      : null,
     canEdit,
     lockedReason: canEdit
       ? null
       : offset < OPEN_AVAILABILITY_WEEK_OFFSET
         ? "O registro de disponibilidade desta semana já foi encerrado."
         : "O registro para esta semana ainda não foi aberto pela coordenação.",
-    options: AVAILABILITY_TEMPLATES.map((template, index) => {
-      const startsAt = new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        start.getDate() + template.day,
-        template.hour,
-      );
-      return {
-        id: `opt-${weekStart}-${index}`,
-        startsAt: startsAt.toISOString(),
-        endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
-        location: locationById(template.loc),
-      };
-    }),
-    selectedSlotIds: record.selectedSlotIds,
+    submittedAt: record.submittedAt,
   };
 }
 
@@ -472,26 +482,28 @@ export const demoApi: ReikiApi = {
       if (!view.canEdit) {
         fail("conflict", view.lockedReason ?? "Registro indisponível para esta semana.", 409);
       }
-      if (!input.unavailable && input.slotIds.length === 0) {
-        fail("validation", "Selecione ao menos um horário ou declare indisponibilidade.", 422);
-      }
-      const validIds = new Set(view.options.map((option) => option.id));
-      if (input.slotIds.some((id) => !validIds.has(id))) {
-        fail("validation", "Um dos horários escolhidos não é válido para esta semana.", 422);
+      if (!input.unavailable && input.entries.length === 0) {
+        fail("validation", "Informe ao menos um horário ou declare indisponibilidade.", 422);
       }
       const current = store();
       const row = current.availability.get(input.weekStart) ?? new Map();
+      const entries: AvailabilityEntry[] = input.entries.map((entry, index) => ({
+        ...entry,
+        id: `demo-entry-${input.weekStart}-${index}`,
+        kind: "available",
+      }));
       row.set(MY_INSTRUCTOR_ID, {
-        status: input.unavailable ? "unavailable" : "published",
+        status: input.unavailable ? "unavailable" : "submitted",
         submittedAt: new Date().toISOString(),
-        selectedSlotIds: input.unavailable ? [] : input.slotIds,
+        selectedSlotIds: [],
+        entries: input.unavailable ? [] : entries,
       } satisfies AvailabilityRecord);
       current.availability.set(input.weekStart, row);
       pushEvent(
         "availability",
         input.unavailable
           ? `${DEMO_INSTRUCTORS.i1.name} declarou indisponibilidade para a semana de ${input.weekStart}.`
-          : `${DEMO_INSTRUCTORS.i1.name} publicou ${plural(input.slotIds.length, "horário")} para a semana de ${input.weekStart}.`,
+          : `${DEMO_INSTRUCTORS.i1.name} registrou ${plural(input.entries.length, "horário")} para a semana de ${input.weekStart}.`,
         DEMO_INSTRUCTORS.i1.name,
       );
       return buildAvailability(input.weekStart);
@@ -535,8 +547,9 @@ export const demoApi: ReikiApi = {
           message: "O ministrante cancelou. A solicitação de cobertura foi enviada aos ministrantes elegíveis.",
         },
       ];
+      const coverRequestId = `cr-${current.counters.event + 1}`;
       current.coverRequests.unshift({
-        id: `cr-${current.counters.event + 1}`,
+        id: coverRequestId,
         status: "open",
         sessionId,
         originalInstructor: DEMO_INSTRUCTORS.i1,
@@ -550,7 +563,7 @@ export const demoApi: ReikiApi = {
         DEMO_INSTRUCTORS.i1.name,
         sessionId,
       );
-      return toInstructorSession(record);
+      return { coverRequestId, status: "open", sessionId };
     },
     async listCoverInvites(signal) {
       await gate({ role: "instructor", signal });
@@ -727,6 +740,20 @@ export const demoApi: ReikiApi = {
       if (record.status !== "pending") {
         fail("conflict", "Esta reorganização já foi tratada.", 409);
       }
+      if (input.alternative === "future_priority") {
+        record.status = "applied";
+        record.alternative = "future_priority";
+        record.priorityGrantedAt = new Date().toISOString();
+        pushEvent(
+          "reallocation",
+          "Prioridade futura registrada; sem garantia automática de vaga.",
+          DEMO_USERS.coordinator.name,
+        );
+        return toReallocation(record);
+      }
+      if (!input.targetSessionId) {
+        fail("validation", "Informe a sessão de destino.", 422);
+      }
       if (!record.candidateSessionIds.includes(input.targetSessionId)) {
         fail("validation", "A sessão escolhida não é uma opção válida.", 422);
       }
@@ -742,6 +769,7 @@ export const demoApi: ReikiApi = {
       }
       target.confirmedCount += record.participantCount;
       record.status = "applied";
+      record.alternative = "extra_session";
       record.appliedToId = target.id;
       pushEvent(
         "reallocation",
@@ -768,4 +796,3 @@ export const demoApi: ReikiApi = {
     },
   },
 };
-

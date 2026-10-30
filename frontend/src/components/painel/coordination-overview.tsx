@@ -32,9 +32,9 @@ const phases: { id: CyclePhase; label: string }[] = [
 ];
 
 const availabilityMeta: Record<AvailabilityStatus, { label: string; tone: Tone }> = {
-  published: { label: "Publicada", tone: "forest" },
-  unavailable: { label: "Indisponível", tone: "sage" },
+  submitted: { label: "Registrada", tone: "forest" },
   pending: { label: "Pendente", tone: "honey" },
+  unavailable: { label: "Indisponível", tone: "sage" },
 };
 
 function phaseIndex(phase: CyclePhase): number {
@@ -234,7 +234,7 @@ export function CoordinationOverview() {
                             {row.submittedAt
                               ? `Registrou em ${formatDateTime(row.submittedAt)}`
                               : "Ainda não registrou"}
-                            {row.status === "published" ? ` · ${plural(row.sessionsOffered, "horário")}` : ""}
+                            {row.status === "submitted" ? ` · ${plural(row.sessionsOffered, "horário")}` : ""}
                           </p>
                         </div>
                       </div>
