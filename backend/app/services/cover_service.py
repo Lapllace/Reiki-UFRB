@@ -103,7 +103,7 @@ def cancel_session(
         original_instructor_id=instructor.id,
         reason=reason,
         status=CoverRequestStatus.OPEN,
-        previous_session_status=previous_status.value,
+        previous_session_status=previous_status,
     )
     db.add(request)
     db.flush()

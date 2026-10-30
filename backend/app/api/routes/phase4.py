@@ -155,3 +155,27 @@ def create_extra_session(
             headers={"X-Error-Code": exc.code},
         )
     return _session_out(db, session)
+
+
+@router.post("/sessions/{session_id}/open", response_model=SessionOut)
+def open_session(
+    session_id: uuid.UUID,
+    user: User = Depends(require_role(Role.COORDINATOR)),
+    _csrf: None = Depends(enforce_same_origin),
+    db: Session = Depends(get_db),
+) -> SessionOut:
+    try:
+        session = phase4_service.open_session(db, user, session_id)
+    except phase4_service.ReallocationError as exc:
+        code_status = {
+            "forbidden": 403,
+            "not_found": 404,
+            "session_full": 409,
+            "invalid_status": 409,
+            "capacity_undefined": 422,
+        }.get(exc.code, 409)
+        raise HTTPException(
+            status_code=code_status, detail=str(exc),
+            headers={"X-Error-Code": exc.code},
+        )
+    return _session_out(db, session)

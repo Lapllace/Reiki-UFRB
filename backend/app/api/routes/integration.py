@@ -51,7 +51,7 @@ def _roster(db: Session, session_id: uuid.UUID) -> list[RosterEntryOut]:
     ).order_by(Enrollment.waitlist_position, Enrollment.created_at)).all()
     return [RosterEntryOut(
         enrollment_id=row.id, participant_name=row.participant.name,
-        status=row.status.value, waitlist_position=row.waitlist_position,
+        status=row.status, waitlist_position=row.waitlist_position,
     ) for row in rows]
 
 
@@ -149,7 +149,7 @@ def coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C
     instructors = db.scalars(select(User).where(User.role == Role.INSTRUCTOR, User.is_active.is_(True))).all()
     return WeeklyCycleOut(
         week_start=ws, week_end=ws + timedelta(days=6),
-        phase=cycle.phase.value if cycle else "collecting_availability",
+        phase=cycle.phase if cycle else "collecting_availability",
         availability_deadline=None, enrollment_opens_at=None,
         totals=CycleTotalsOut(
             sessions=len(rows), capacity=sum(capacity_values) if len(capacity_values) == len(rows) else None,

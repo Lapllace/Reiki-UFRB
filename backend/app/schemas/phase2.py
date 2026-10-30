@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.base import ApiModel, camel
+from app.schemas.domain import InstructorSummaryOut, LocationOut, SessionOut
 
 
 class AvailabilityStatus(StrEnum):
@@ -20,15 +21,13 @@ class AvailabilityEntryKind(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-class AvailabilityEntryIn(BaseModel):
+class AvailabilityEntryIn(ApiModel):
     """Um horário INFORMADO pelo ministrante (não um slot pré-definido)."""
 
     kind: AvailabilityEntryKind = AvailabilityEntryKind.AVAILABLE
-    starts_at: datetime = Field(serialization_alias=camel("starts_at"))
-    ends_at: datetime = Field(serialization_alias=camel("ends_at"))
-    location_id: uuid.UUID | None = Field(
-        default=None, serialization_alias=camel("location_id")
-    )
+    starts_at: datetime
+    ends_at: datetime
+    location_id: uuid.UUID | None = None
     note: str | None = Field(default=None, max_length=200)
 
 
@@ -60,10 +59,10 @@ class WeeklyAvailabilityOut(ApiModel):
     entries: list[AvailabilityEntryOut] = []
 
 
-class PublishAvailabilityIn(BaseModel):
+class PublishAvailabilityIn(ApiModel):
     """Submissão de disponibilidade. `unavailable=true` declara a semana inteira."""
 
-    week_start: str = Field(serialization_alias=camel("week_start"), pattern=r"^\d{4}-\d{2}-\d{2}$")
+    week_start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     unavailable: bool = False
     note: str | None = Field(default=None, max_length=500)
     entries: list[AvailabilityEntryIn] = []
@@ -96,15 +95,15 @@ class EnrollmentOut(ApiModel):
     cancelled_at: datetime | None = Field(
         default=None, serialization_alias=camel("cancelled_at")
     )
-    session_id: uuid.UUID = Field(serialization_alias=camel("session_id"))
+    session: SessionOut
     can_cancel: bool = Field(serialization_alias=camel("can_cancel"))
     cancel_blocked_reason: str | None = Field(
         default=None, serialization_alias=camel("cancel_blocked_reason")
     )
 
 
-class EnrollIn(BaseModel):
-    session_id: uuid.UUID = Field(serialization_alias=camel("session_id"))
+class EnrollIn(ApiModel):
+    session_id: uuid.UUID
 
 
 class EnrollmentResultOut(ApiModel):

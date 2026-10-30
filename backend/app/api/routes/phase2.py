@@ -10,12 +10,18 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import enforce_same_origin, require_role, require_user
 from app.db.session import get_db
 from app.models.phase2 import AvailabilityStatus, Enrollment
 from app.models.user import Role, User
+from app.schemas.domain import (
+    InstructorSummaryOut,
+    LocationOut,
+    SessionOut,
+)
 from app.schemas.phase2 import (
     AvailabilityEntryKind,
     AvailabilityEntryOut,
@@ -122,24 +128,58 @@ def _enrollment_out(db: Session, enrollment: Enrollment) -> EnrollmentOut:
     from app.models.session_week import ReikiSession
 
     session_row = db.get(ReikiSession, enrollment.session_id)
+    if session_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sessão da inscrição não encontrada.",
+        )
+
     can_cancel = (
-        enrollment.status.value in ("confirmed", "waitlisted")
-        and session_row is not None
+        enrollment.status in ("confirmed", "waitlisted")
         and session_row.status not in ("cancelled", "completed")
     )
     reason = None
     if not can_cancel:
-        if enrollment.status.value not in ("confirmed", "waitlisted"):
+        if enrollment.status not in ("confirmed", "waitlisted"):
             reason = "Inscrição já cancelada ou concluída."
-        elif session_row is not None and session_row.status in ("cancelled", "completed"):
+        elif session_row.status in ("cancelled", "completed"):
             reason = "Sessão cancelada ou concluída."
+
+    confirmed_count = db.scalar(
+        select(func.count())
+        .select_from(Enrollment)
+        .where(
+            Enrollment.session_id == session_row.id,
+            Enrollment.status == "confirmed",
+        )
+    ) or 0
+    waitlist_count = db.scalar(
+        select(func.count())
+        .select_from(Enrollment)
+        .where(
+            Enrollment.session_id == session_row.id,
+            Enrollment.status == "waitlisted",
+        )
+    ) or 0
+
     return EnrollmentOut(
         id=enrollment.id,
-        status=enrollment.status.value,
+        status=enrollment.status,
         waitlist_position=enrollment.waitlist_position,
         created_at=enrollment.created_at,
         cancelled_at=enrollment.cancelled_at,
-        session_id=enrollment.session_id,
+        session=SessionOut(
+            id=session_row.id,
+            starts_at=session_row.starts_at,
+            ends_at=session_row.ends_at,
+            location=LocationOut.model_validate(session_row.location) if session_row.location else None,
+            instructor=InstructorSummaryOut.model_validate(session_row.instructor) if session_row.instructor else None,
+            capacity=session_row.capacity,
+            confirmed_count=confirmed_count,
+            waitlist_count=waitlist_count,
+            status=session_row.status,
+            is_extra=session_row.is_extra,
+        ),
         can_cancel=can_cancel,
         cancel_blocked_reason=reason,
     )

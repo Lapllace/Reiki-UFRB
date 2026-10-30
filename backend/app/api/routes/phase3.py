@@ -52,7 +52,7 @@ def cancel_session(
         )
     return {
         "coverRequestId": str(request.id),
-        "status": request.status.value,
+        "status": request.status,
         "sessionId": str(request.session_id),
     }
 

@@ -211,6 +211,17 @@ def publish_week(db: Session, week_start: date):
             "incomplete",
             "Agenda só abre quando todos os ministrantes ativos submeteram.",
         )
+    # Verificar que todas as sessões da semana têm capacidade definida
+    from app.services.schedule_service import list_week_sessions
+    from app.models.session_week import ReikiSession
+    sessions = list_week_sessions(db, ws)
+    for s in sessions:
+        if s.capacity is None:
+            raise AvailabilityError(
+                "capacity_undefined",
+                f"Sessão {s.id} não tem capacidade definida. "
+                "Configure a capacidade antes de publicar a agenda.",
+            )
     if cycle.phase == CyclePhase.COLLECTING_AVAILABILITY:
         cycle.phase = CyclePhase.ENROLLMENT_PENDING
         db.flush()
@@ -289,6 +300,9 @@ def create_enrollment(db: Session, participant: User, session_id: uuid.UUID) -> 
         session_row.status = "full"
     db.add(enrollment)
     db.flush()
+    # A sessão pode ter passado de `open` para `full` ao preencher a última
+    # vaga (ou voltar a `open` se o estado anterior estava inconsistente).
+    _reconcile_session_capacity(db, session_row)
     return enrollment
 
 
@@ -305,9 +319,42 @@ def _next_waitlist_position(db: Session, session_id: uuid.UUID) -> int:
 def cancel_enrollment(
     db: Session, participant: User, enrollment_id: uuid.UUID, reason: str | None = None
 ) -> Enrollment:
-    """Cancelamento transacional; promove o próximo da fila na mesma transação."""
-    enrollment = db.get(Enrollment, enrollment_id)
-    if enrollment is None or enrollment.participant_id != participant.id:
+    """Cancelamento transacional; promove o próximo da fila na mesma transação.
+
+    Ordem de bloqueios: sessão → inscrição. É a mesma ordem usada por
+    `create_enrollment()` (sessão) e por `apply_reallocation()` (sessão de
+    destino → inscrição de origem), evitando ciclos de espera.
+    """
+    from app.models.session_week import ReikiSession
+
+    # Identifica a sessão e a bloqueia ANTES da inscrição. A leitura via JOIN
+    # não confia no identity map: a sessão é recarregada do banco (populate_existing)
+    # já sob o lock.
+    session_row = db.execute(
+        select(ReikiSession)
+        .join(Enrollment, Enrollment.session_id == ReikiSession.id)
+        .where(Enrollment.id == enrollment_id)
+        .with_for_update(of=ReikiSession)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if session_row is None:
+        raise EnrollmentError("not_found", "Inscrição não encontrada.")
+
+    # Só então bloqueia a inscrição, recarregando-a do banco.
+    # of=Enrollment evita bloquear relacionamentos joined nullable.
+    enrollment = db.execute(
+        select(Enrollment)
+        .where(Enrollment.id == enrollment_id)
+        .with_for_update(of=Enrollment)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    # Revalida depois dos bloqueios: a inscrição pode ter sido cancelada,
+    # promovida ou a sessão pode ter mudado entre a leitura e o lock.
+    if (
+        enrollment is None
+        or enrollment.participant_id != participant.id
+        or enrollment.session_id != session_row.id
+    ):
         raise EnrollmentError("not_found", "Inscrição não encontrada.")
     if enrollment.status not in (EnrollmentStatus.CONFIRMED, EnrollmentStatus.WAITLISTED):
         raise EnrollmentError(
@@ -315,44 +362,71 @@ def cancel_enrollment(
             "Somente inscrições confirmadas ou na fila podem ser canceladas.",
         )
 
-    from app.models.session_week import ReikiSession
-
-    session_row = db.get(ReikiSession, enrollment.session_id)
-    if session_row is None or session_row.status in ("cancelled", "completed"):
+    if session_row.status in ("cancelled", "completed"):
         raise EnrollmentError(
             "session_closed", "Sessão não admite cancelamento neste estado."
         )
 
+    # Guarda o estado ANTES de alterar: a promoção só é devida quando uma
+    # inscrição CONFIRMED libera vaga. Cancelar alguém da fila não abre vaga.
+    original_status = enrollment.status
+
     enrollment.status = EnrollmentStatus.CANCELLED
     enrollment.cancelled_at = datetime.now(UTC)
     enrollment.cancel_reason = reason
+    if original_status == EnrollmentStatus.WAITLISTED:
+        enrollment.waitlist_position = None
 
-    # Promoção da fila na MESMA transação quando uma vaga confirmada se abre.
-    if enrollment.status == EnrollmentStatus.CANCELLED and _was_confirmed(db, enrollment):
-        _promote_next_from_waitlist(db, session_row)
+    # Garante que o status da inscrição esteja visível nas consultas de promoção
+    # (a aplicação usa autoflush=False).
     db.flush()
+
+    # Promoção da fila na MESMA transação somente quando uma vaga confirmada
+    # se abre em sessão que ainda admite inscrições. Sessões sem cobertura ou
+    # encerradas apenas renumera a fila restante.
+    if (
+        original_status == EnrollmentStatus.CONFIRMED
+        and session_row.status in ("open", "full")
+    ):
+        _promote_next_from_waitlist(db, session_row)
+    else:
+        renumber_waitlist(db, session_row.id)
+    db.flush()
+    # Fecha a transação com o status da sessão coerente com as inscrições
+    # confirmadas (sessões `uncovered`/`cancelled`/`completed` são preservadas).
+    _reconcile_session_capacity(db, session_row)
     return enrollment
 
 
-def _was_confirmed(db: Session, enrollment: Enrollment) -> bool:
-    # Após flush, o status novo é CANCELLED; verifica se havia vaga aberta
-    # comparando confirmados (sem o cancelado) com a capacidade.
-    from sqlalchemy import func as _func
-
-    confirmed = db.scalar(
-        select(_func.count())
-        .select_from(Enrollment)
-        .where(
-            Enrollment.session_id == enrollment.session_id,
-            Enrollment.status == EnrollmentStatus.CONFIRMED,
-        )
+def _reconcile_session_capacity(db: Session, session_row) -> None:
+    """Sincroniza `open`/`full` com a contagem de confirmados."""
+    if session_row.status not in ("open", "full"):
+        return
+    if session_row.capacity is None:
+        return
+    session_row.status = (
+        "full"
+        if _confirmed_count(db, session_row.id) >= session_row.capacity
+        else "open"
     )
-    from app.models.session_week import ReikiSession
 
-    session_row = db.get(ReikiSession, enrollment.session_id)
-    if session_row is None or session_row.capacity is None:
-        return False
-    return confirmed < session_row.capacity
+
+def renumber_waitlist(db: Session, session_id: uuid.UUID) -> None:
+    """Renumera a fila restante de forma determinística (1 = próximo)."""
+    remaining = db.scalars(
+        select(Enrollment)
+        .where(
+            Enrollment.session_id == session_id,
+            Enrollment.status == EnrollmentStatus.WAITLISTED,
+        )
+        .order_by(
+            Enrollment.waitlist_position,
+            Enrollment.created_at,
+            Enrollment.id,
+        )
+    ).all()
+    for pos, enr in enumerate(remaining, start=1):
+        enr.waitlist_position = pos
 
 
 def _promote_next_from_waitlist(db: Session, session_row) -> None:
@@ -364,7 +438,11 @@ def _promote_next_from_waitlist(db: Session, session_row) -> None:
             Enrollment.session_id == session_row.id,
             Enrollment.status == EnrollmentStatus.WAITLISTED,
         )
-        .order_by(Enrollment.waitlist_position)
+        .order_by(
+            Enrollment.waitlist_position,
+            Enrollment.created_at,
+            Enrollment.id,
+        )
         .limit(1)
         .with_for_update(of=Enrollment)
     )
@@ -374,17 +452,10 @@ def _promote_next_from_waitlist(db: Session, session_row) -> None:
         return
     next_wait.status = EnrollmentStatus.CONFIRMED
     next_wait.waitlist_position = None
-    # Reordena as posições restantes de forma determinística.
-    remaining = db.scalars(
-        select(Enrollment)
-        .where(
-            Enrollment.session_id == session_row.id,
-            Enrollment.status == EnrollmentStatus.WAITLISTED,
-        )
-        .order_by(Enrollment.waitlist_position)
-    ).all()
-    for pos, enr in enumerate(remaining, start=1):
-        enr.waitlist_position = pos
+    # Com autoflush=False, o flush abaixo torna a promoção visível antes de
+    # recalcular posições e contagem de confirmados.
+    db.flush()
+    renumber_waitlist(db, session_row.id)
     if session_row.capacity is not None and _confirmed_count(db, session_row.id) >= session_row.capacity:
         session_row.status = "full"
 

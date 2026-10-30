@@ -34,7 +34,7 @@ def _to_out(session: ReikiSession) -> SessionOut:
         capacity=session.capacity,
         confirmed_count=None,  # inscrições chegam na Fase 2
         waitlist_count=None,
-        status=SessionStatus(session.status.value),
+        status=SessionStatus(session.status),
         is_extra=session.is_extra,
     )
 

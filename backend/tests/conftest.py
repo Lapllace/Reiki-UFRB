@@ -59,6 +59,21 @@ def db(sqlite_engine) -> Generator:
 
 
 @pytest.fixture
+def db_autoflush(sqlite_engine) -> Generator:
+    """Sessão com autoflush=False para validar operações que fazem flush explícito."""
+    TestingSession = sessionmaker(
+        bind=sqlite_engine, autoflush=False, expire_on_commit=False
+    )
+    session = TestingSession()
+    yield session
+    session.rollback()
+    session.close()
+    with sqlite_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            conn.execute(delete(table))
+
+
+@pytest.fixture
 def client(sqlite_engine) -> Generator[TestClient, None, None]:
     app = create_app()
     test_settings = Settings(cors_origins="http://localhost:3000")
