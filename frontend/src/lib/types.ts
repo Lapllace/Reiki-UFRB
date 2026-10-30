@@ -145,15 +145,7 @@ export interface AppNotification {
 /* ----------------------------- Ministrante ------------------------------ */
 
 /** Janela (dia + horário + local) oferecida pela coordenação para o ministrante escolher. */
-export interface SlotOption {
-  id: string;
-  /** Início em ISO 8601. */
-  startsAt: string;
-  endsAt: string;
-  location: Location;
-}
-
-export type AvailabilityStatus = "pending" | "published" | "submitted" | "unavailable";
+export type AvailabilityStatus = "pending" | "submitted" | "unavailable";
 
 export type AvailabilityEntryKind = "available" | "unavailable";
 
@@ -170,15 +162,12 @@ export interface WeeklyAvailability {
   weekStart: string;
   weekEnd: string;
   status: AvailabilityStatus;
-  /** Prazo para registrar, quando definido. */
-  deadline?: string | null;
   /** O servidor informa se o registro está aberto/editável. */
   canEdit: boolean;
   lockedReason?: string | null;
-  entries?: AvailabilityEntry[];
-  /** Compatibilidade temporária do modo demonstração legado. */
-  options?: SlotOption[];
-  selectedSlotIds?: string[];
+  submittedAt?: string | null;
+  note?: string | null;
+  entries: AvailabilityEntry[];
 }
 
 export interface PublishAvailabilityInput {
@@ -186,13 +175,12 @@ export interface PublishAvailabilityInput {
   /** `true` para declarar indisponibilidade na semana inteira. */
   unavailable: boolean;
   note?: string | null;
-  entries?: {
+  entries: {
     startsAt: string;
     endsAt: string;
     locationId?: string | null;
     note?: string | null;
   }[];
-  slotIds?: string[];
 }
 
 export interface RosterEntry {

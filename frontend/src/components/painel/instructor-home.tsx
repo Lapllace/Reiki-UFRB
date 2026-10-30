@@ -72,8 +72,8 @@ export function InstructorHome() {
               <div className="mt-2">
                 {availability.data.status === "pending" ? (
                   <Badge tone="honey">Ainda não registrada</Badge>
-                ) : availability.data.status === "published" ? (
-                  <Badge tone="forest">Disponibilidade publicada</Badge>
+                ) : availability.data.status === "submitted" ? (
+                  <Badge tone="forest">Disponibilidade registrada</Badge>
                 ) : (
                   <Badge tone="sage">Indisponibilidade declarada</Badge>
                 )}

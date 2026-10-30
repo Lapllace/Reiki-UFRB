@@ -17,6 +17,7 @@ import type {
   AppNotification,
   Reallocation,
   AvailabilityStatus,
+  AvailabilityEntry,
   SessionNotice,
   SessionStatus,
   User,
@@ -134,6 +135,7 @@ export interface AvailabilityRecord {
   status: AvailabilityStatus;
   submittedAt: string | null;
   selectedSlotIds: string[];
+  entries: AvailabilityEntry[];
 }
 
 export interface DemoState {
@@ -577,11 +579,17 @@ export function createDemoState(): DemoState {
     availability.set(toISODate(addDays(monday, week * 7)), new Map(Object.entries(row)));
   };
   const published = (hoursAgo: number): AvailabilityRecord => ({
-    status: "published",
+    status: "submitted",
     submittedAt: iso(new Date(now.getTime() - hoursAgo * 3_600_000)),
     selectedSlotIds: [],
+    entries: [],
   });
-  const pending: AvailabilityRecord = { status: "pending", submittedAt: null, selectedSlotIds: [] };
+  const pending: AvailabilityRecord = {
+    status: "pending",
+    submittedAt: null,
+    selectedSlotIds: [],
+    entries: [],
+  };
   for (const week of [-1, 0, 1]) {
     setAvailability(week, {
       [DEMO_INSTRUCTORS.i1.id]: published(300 - week * 100),
@@ -596,6 +604,7 @@ export function createDemoState(): DemoState {
       status: "unavailable",
       submittedAt: iso(new Date(now.getTime() - 120 * 3_600_000)),
       selectedSlotIds: [],
+      entries: [],
     },
   });
 

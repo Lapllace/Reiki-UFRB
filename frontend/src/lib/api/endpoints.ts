@@ -1,11 +1,4 @@
-/**
- * CAMINHOS DA API — TODOS PROPOSTOS, A DEFINIR COM O BACKEND.
- *
- * Nenhum destes endpoints existe oficialmente ainda. Eles estão reunidos aqui
- * para que, quando o contrato do FastAPI for definido, a integração se resuma a
- * ajustar este arquivo e `services.ts`. Nenhuma página ou componente deve
- * montar URLs por conta própria.
- */
+/** Caminhos oficiais da API FastAPI consumidos pelo frontend. */
 export const endpoints = {
   auth: {
     me: "/auth/me",
