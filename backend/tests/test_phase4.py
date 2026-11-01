@@ -20,7 +20,7 @@ from app.schemas.phase4 import CreateExtraSessionIn
 from app.services import cover_service, phase2_service, phase4_service
 from tests.conftest import login
 from tests.test_auth import PASSWORD
-from tests.test_phase2 import _make_session
+from .helpers import _make_session
 from tests.test_phase3 import _instructor, _owned_session
 
 

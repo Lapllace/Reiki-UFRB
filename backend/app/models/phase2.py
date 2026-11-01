@@ -115,6 +115,12 @@ class AvailabilityEntry(Base, UUIDPk):
         index=True,
     )
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Vigência da oferta. Reenvios marcam as entradas anteriores como
+    # históricas em vez de apagá-las, preservando a origem das sessões já
+    # convertidas.
+    is_current: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
 
     availability: Mapped[WeeklyAvailability] = relationship(
         back_populates="entries"

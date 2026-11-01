@@ -3,7 +3,7 @@
 import uuid
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -18,10 +18,13 @@ from app.models.session_week import ReikiSession, SessionStatus
 from app.models.user import Role, User
 from app.schemas.domain import InstructorSummaryOut, LocationOut, SessionOut, SessionStatus as SessionStatusOut, WeekSessionsOut
 from app.schemas.integration import (
-    AppNotificationOut, AuditEventOut, CoverRequestOut, CycleTotalsOut,
-    InstructorAvailabilityRowOut, InstructorSessionOut, RosterEntryOut, WeeklyCycleOut,
+    AppNotificationOut, AuditEventOut, CoordinationAvailabilityEntryOut,
+    CoordinationInstructorAvailabilityOut, CoverRequestOut, CreateSessionFromAvailabilityIn,
+    CycleCreateIn, CycleManagementOut, CycleStateOut, CycleTotalsOut,
+    InstructorAvailabilityRowOut, InstructorAvailabilityStatusOut,
+    InstructorSessionOut, RosterEntryOut, WeekAvailabilitiesOut, WeeklyCycleOut,
 )
-from app.services import phase2_service
+from app.services import coordination_service, phase2_service
 
 instructor_router = APIRouter(prefix="/instructor", tags=["instructor"])
 coordination_router = APIRouter(prefix="/coordination", tags=["coordination"])
@@ -61,6 +64,43 @@ def _can_cancel(item: ReikiSession) -> tuple[bool, str | None]:
     return True, None
 
 
+def _week_availabilities_out(
+    view: coordination_service.WeekAvailabilityView,
+) -> WeekAvailabilitiesOut:
+    return WeekAvailabilitiesOut(
+        week_start=view.week_start,
+        week_end=view.week_end,
+        cycle_id=view.cycle.id if view.cycle else None,
+        cycle_phase=view.cycle.phase.value if view.cycle else None,
+        instructors=[
+            CoordinationInstructorAvailabilityOut(
+                instructor_id=item.instructor_id,
+                availability_id=item.availability_id,
+                name=item.name,
+                status=item.status,
+                submitted_at=item.submitted_at,
+                note=item.note,
+                entries=[
+                    CoordinationAvailabilityEntryOut(
+                        id=entry.id,
+                        kind=entry.kind,
+                        starts_at=entry.starts_at,
+                        ends_at=entry.ends_at,
+                        location=LocationOut.model_validate(entry.location)
+                        if entry.location
+                        else None,
+                        note=entry.note,
+                        is_current=entry.is_current,
+                        converted_session_id=entry.converted_session_id,
+                    )
+                    for entry in item.entries
+                ],
+            )
+            for item in view.instructors
+        ],
+    )
+
+
 @instructor_router.get("/sessions", response_model=list[InstructorSessionOut])
 def instructor_sessions(user: User = Depends(require_role(Role.INSTRUCTOR, Role.COORDINATOR)),
                         db: Session = Depends(get_db)) -> list[InstructorSessionOut]:
@@ -86,12 +126,14 @@ def coordination_sessions(weekStart: str, _user: User = Depends(require_role(Rol
     ws = phase2_service.schedule_service.parse_week_start(weekStart)
     if ws is None:
         raise HTTPException(422, "Semana inválida.")
+    week_start_utc, week_end_utc = phase2_service.schedule_service.week_bounds_utc(ws)
     rows = db.scalars(select(ReikiSession).where(
-        ReikiSession.starts_at >= ws, ReikiSession.starts_at < ws + timedelta(days=7)
+        ReikiSession.starts_at >= week_start_utc,
+        ReikiSession.starts_at < week_end_utc,
     ).order_by(ReikiSession.starts_at)).unique().all()
     cycle = db.scalar(select(WeeklyCycle).where(WeeklyCycle.week_start == ws))
     return WeekSessionsOut(week_start=ws, week_end=ws + timedelta(days=6),
-                           sessions=[_session_out(db, row) for row in rows], published=cycle is not None)
+                           sessions=[_session_out(db, row) for row in rows], published=phase2_service.schedule_service.is_published(cycle))
 
 
 @coordination_router.get("/sessions/{session_id}/roster", response_model=list[RosterEntryOut])
@@ -130,8 +172,10 @@ def coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C
     if ws is None:
         raise HTTPException(422, "Semana inválida.")
     cycle = db.scalar(select(WeeklyCycle).where(WeeklyCycle.week_start == ws))
+    week_start_utc, week_end_utc = phase2_service.schedule_service.week_bounds_utc(ws)
     rows = db.scalars(select(ReikiSession).where(
-        ReikiSession.starts_at >= ws, ReikiSession.starts_at < ws + timedelta(days=7)
+        ReikiSession.starts_at >= week_start_utc,
+        ReikiSession.starts_at < week_end_utc,
     )).all()
     confirmed = sum(db.scalar(select(func.count()).select_from(Enrollment).where(
         Enrollment.session_id == row.id, Enrollment.status == EnrollmentStatus.CONFIRMED
@@ -146,10 +190,10 @@ def coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C
             ReallocationCase.status == ReallocationStatus.PENDING,
             ReallocationCase.origin_session_id.in_([row.id for row in rows]),
         )) or 0
-    instructors = db.scalars(select(User).where(User.role == Role.INSTRUCTOR, User.is_active.is_(True))).all()
+    summary = phase2_service.instructor_availability_summary(db, ws)
     return WeeklyCycleOut(
         week_start=ws, week_end=ws + timedelta(days=6),
-        phase=cycle.phase if cycle else "collecting_availability",
+        phase=cycle.phase.value if cycle else "collecting_availability",
         availability_deadline=None, enrollment_opens_at=None,
         totals=CycleTotalsOut(
             sessions=len(rows), capacity=sum(capacity_values) if len(capacity_values) == len(rows) else None,
@@ -158,8 +202,177 @@ def coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C
             open_cover_requests=db.scalar(select(func.count()).select_from(CoverRequest).where(CoverRequest.status == CoverRequestStatus.OPEN)) or 0,
             pending_reallocations=pending,
         ),
-        instructors=[InstructorAvailabilityRowOut(instructor={"id": str(item.id), "name": item.name},
-            status="pending", submitted_at=None, sessions_offered=0) for item in instructors],
+        instructors=[InstructorAvailabilityRowOut(
+            instructor={"id": str(item.instructor_id), "name": item.name},
+            instructor_id=item.instructor_id, name=item.name, status=item.status,
+            submitted_at=item.submitted_at, sessions_offered=item.sessions_offered,
+        ) for item in summary],
+    )
+
+
+@coordination_router.post("/cycles", response_model=CycleManagementOut, status_code=200)
+def create_coordination_cycle(
+    payload: CycleCreateIn,
+    response: Response,
+    _user: User = Depends(require_role(Role.COORDINATOR)),
+    _csrf: None = Depends(enforce_same_origin),
+    db: Session = Depends(get_db),
+) -> CycleManagementOut:
+    ws = phase2_service.schedule_service.parse_week_start(payload.week_start)
+    if ws is None:
+        raise HTTPException(422, "Semana inválida.")
+    cycle, created = phase2_service.create_or_get_cycle(db, ws)
+    summary = phase2_service.instructor_availability_summary(db, ws)
+    response.status_code = 201 if created else 200
+    return CycleManagementOut(
+        id=cycle.id,
+        week_start=cycle.week_start,
+        status=cycle.phase.value,
+        instructors=[
+            InstructorAvailabilityStatusOut(
+                instructor_id=item.instructor_id, name=item.name, status=item.status,
+                submitted_at=item.submitted_at, sessions_offered=item.sessions_offered,
+            )
+            for item in summary
+        ],
+    )
+
+
+@coordination_router.get(
+    "/cycles/{weekStart}/availabilities",
+    response_model=WeekAvailabilitiesOut,
+)
+def coordination_availabilities(
+    weekStart: str,
+    _user: User = Depends(require_role(Role.COORDINATOR)),
+    db: Session = Depends(get_db),
+) -> WeekAvailabilitiesOut:
+    """Disponibilidades administrativas da semana (normalizada para segunda)."""
+    ws = phase2_service.schedule_service.parse_week_start(weekStart)
+    if ws is None:
+        raise HTTPException(422, "Semana inválida.")
+    return _week_availabilities_out(
+        coordination_service.get_week_availabilities(db, ws)
+    )
+
+
+@coordination_router.post(
+    "/cycles/{weekStart}/sessions",
+    response_model=SessionOut,
+    status_code=201,
+)
+def create_coordination_session(
+    weekStart: str,
+    payload: CreateSessionFromAvailabilityIn,
+    user: User = Depends(require_role(Role.COORDINATOR)),
+    _csrf: None = Depends(enforce_same_origin),
+    db: Session = Depends(get_db),
+) -> SessionOut:
+    """Converte uma oferta da semana em sessão regular (sem publicar agenda)."""
+    ws = phase2_service.schedule_service.parse_week_start(weekStart)
+    if ws is None:
+        raise HTTPException(422, "Semana inválida.")
+    try:
+        session = coordination_service.create_regular_session(
+            db,
+            user,
+            ws,
+            availability_entry_id=payload.availability_entry_id,
+            capacity=payload.capacity,
+            location_id=payload.location_id,
+        )
+    except coordination_service.CoordinationError as exc:
+        code_status = {
+            "forbidden": 403,
+            "cycle_not_found": 404,
+            "entry_not_found": 404,
+            "location_not_found": 404,
+            "invalid_capacity": 422,
+            "location_required": 422,
+        }.get(exc.code, 409)
+        raise HTTPException(
+            status_code=code_status,
+            detail=str(exc),
+            headers={"X-Error-Code": exc.code},
+        )
+    return _session_out(db, session)
+
+
+@coordination_router.post(
+    "/cycles/{weekStart}/publish",
+    response_model=CycleStateOut,
+    status_code=200,
+)
+def publish_coordination_cycle(
+    weekStart: str,
+    _user: User = Depends(require_role(Role.COORDINATOR)),
+    _csrf: None = Depends(enforce_same_origin),
+    db: Session = Depends(get_db),
+) -> CycleStateOut:
+    """Publica explicitamente a agenda da semana (sem abrir inscrições)."""
+    ws = phase2_service.schedule_service.parse_week_start(weekStart)
+    if ws is None:
+        raise HTTPException(422, "Semana inválida.")
+    try:
+        cycle = phase2_service.publish_week(db, ws)
+    except phase2_service.AvailabilityError as exc:
+        code_status = {
+            "cycle_not_found": 404,
+            "incomplete": 409,
+            "capacity_undefined": 409,
+            "invalid_capacity": 409,
+            "schedule_conflict": 409,
+            "invalid_period": 409,
+            "outside_week": 409,
+        }.get(exc.code, 409)
+        raise HTTPException(
+            status_code=code_status,
+            detail=str(exc),
+            headers={"X-Error-Code": exc.code},
+        )
+    return CycleStateOut(
+        id=cycle.id, week_start=cycle.week_start, status=cycle.phase.value
+    )
+
+
+@coordination_router.post(
+    "/cycles/{weekStart}/open-enrollment",
+    response_model=CycleStateOut,
+    status_code=200,
+)
+def open_coordination_enrollment(
+    weekStart: str,
+    _user: User = Depends(require_role(Role.COORDINATOR)),
+    _csrf: None = Depends(enforce_same_origin),
+    db: Session = Depends(get_db),
+) -> CycleStateOut:
+    """Abre explicitamente as inscrições de um ciclo já publicado."""
+    ws = phase2_service.schedule_service.parse_week_start(weekStart)
+    if ws is None:
+        raise HTTPException(422, "Semana inválida.")
+    try:
+        cycle = phase2_service.open_enrollment(db, ws)
+    except phase2_service.AvailabilityError as exc:
+        code_status = {
+            "cycle_not_found": 404,
+            "not_published": 409,
+            "invalid_cycle_phase": 409,
+            "empty_agenda": 409,
+            "no_enrollable_sessions": 409,
+            "capacity_undefined": 409,
+            "invalid_capacity": 409,
+            "capacity_exceeded": 409,
+            "schedule_conflict": 409,
+            "invalid_period": 409,
+            "outside_week": 409,
+        }.get(exc.code, 409)
+        raise HTTPException(
+            status_code=code_status,
+            detail=str(exc),
+            headers={"X-Error-Code": exc.code},
+        )
+    return CycleStateOut(
+        id=cycle.id, week_start=cycle.week_start, status=cycle.phase.value
     )
 
 

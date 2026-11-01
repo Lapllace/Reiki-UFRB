@@ -93,7 +93,7 @@ jobs:
           engine = create_engine(url)
           with engine.connect() as conn:
               rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-          expected = "d5e6f7a8b9c0"
+          expected = "f7a8b9c0d1e2"
           if rev != expected:
               print(f"ERRO: revisao atual e '{rev}', esperada '{expected}'")
               sys.exit(1)
@@ -104,6 +104,9 @@ jobs:
         run: |
           python -m pytest -q -rs \
             tests/test_app_health.py \
+            tests/test_availability_sessions.py \
+            tests/test_cycle_management.py \
+            tests/test_cycle_publication.py \
             tests/test_phase2.py \
             tests/test_phase3.py \
             tests/test_phase4.py
@@ -112,6 +115,9 @@ jobs:
         run: |
           output=$(python -m pytest -q --tb=no \
             tests/test_app_health.py \
+            tests/test_availability_sessions.py \
+            tests/test_cycle_management.py \
+            tests/test_cycle_publication.py \
             tests/test_phase2.py \
             tests/test_phase3.py \
             tests/test_phase4.py 2>&1)

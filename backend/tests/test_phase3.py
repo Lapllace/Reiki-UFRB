@@ -26,7 +26,7 @@ from app.models.user import Role, User
 from app.services import cover_service, phase2_service
 from tests.conftest import login
 from tests.test_auth import PASSWORD
-from tests.test_phase2 import _make_participant, _make_session
+from .helpers import _make_participant, _make_session
 
 
 def _instructor(db, n=None) -> User:

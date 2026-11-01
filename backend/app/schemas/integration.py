@@ -6,8 +6,12 @@ from datetime import date, datetime
 from pydantic import Field
 
 from app.schemas.base import ApiModel, camel
-from app.schemas.domain import SessionOut
-from app.schemas.phase2 import EnrollmentStatus
+from app.schemas.domain import LocationOut, SessionOut
+from app.schemas.phase2 import (
+    AvailabilityEntryKind,
+    AvailabilityStatus,
+    EnrollmentStatus,
+)
 
 
 class RosterEntryOut(ApiModel):
@@ -45,11 +49,41 @@ class CycleTotalsOut(ApiModel):
     pending_reallocations: int = Field(serialization_alias=camel("pending_reallocations"))
 
 
-class InstructorAvailabilityRowOut(ApiModel):
-    instructor: dict
-    status: str
+class InstructorAvailabilityStatusOut(ApiModel):
+    """Estado real da disponibilidade de um ministrante em uma semana."""
+
+    instructor_id: uuid.UUID = Field(serialization_alias=camel("instructor_id"))
+    name: str
+    status: AvailabilityStatus
     submitted_at: datetime | None = Field(default=None, serialization_alias=camel("submitted_at"))
     sessions_offered: int = Field(serialization_alias=camel("sessions_offered"))
+
+
+class InstructorAvailabilityRowOut(InstructorAvailabilityStatusOut):
+    # Mantém o contrato existente do frontend (`instructor.id`/`instructor.name`)
+    # e expõe também os campos planos usados pela gestão de ciclos.
+    instructor: dict
+
+
+class CycleCreateIn(ApiModel):
+    week_start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class CycleManagementOut(ApiModel):
+    """Resposta da criação/inicialização de um ciclo semanal."""
+
+    id: uuid.UUID
+    week_start: date = Field(serialization_alias=camel("week_start"))
+    status: str
+    instructors: list[InstructorAvailabilityStatusOut]
+
+
+class CycleStateOut(ApiModel):
+    """Estado do ciclo após uma transição explícita de fase."""
+
+    id: uuid.UUID
+    week_start: date = Field(serialization_alias=camel("week_start"))
+    status: str
 
 
 class WeeklyCycleOut(ApiModel):
@@ -60,6 +94,69 @@ class WeeklyCycleOut(ApiModel):
     enrollment_opens_at: datetime | None = Field(default=None, serialization_alias=camel("enrollment_opens_at"))
     totals: CycleTotalsOut
     instructors: list[InstructorAvailabilityRowOut]
+
+
+class CoordinationAvailabilityEntryOut(ApiModel):
+    """Um horário ofertado pelo ministrante, como a coordenação o enxerga."""
+
+    id: uuid.UUID
+    kind: AvailabilityEntryKind
+    starts_at: datetime = Field(serialization_alias=camel("starts_at"))
+    ends_at: datetime = Field(serialization_alias=camel("ends_at"))
+    location: LocationOut | None = None
+    note: str | None = None
+    # Ofertas antigas permanecem no histórico, mas não são vigentes.
+    is_current: bool = Field(default=True, serialization_alias=camel("is_current"))
+    # Sessão já criada a partir desta oferta (nulo enquanto não convertida).
+    converted_session_id: uuid.UUID | None = Field(
+        default=None, serialization_alias=camel("converted_session_id")
+    )
+
+
+class CoordinationInstructorAvailabilityOut(ApiModel):
+    """Submissão de um ministrante ativo (ou ausência de submissão)."""
+
+    instructor_id: uuid.UUID = Field(serialization_alias=camel("instructor_id"))
+    availability_id: uuid.UUID | None = Field(
+        default=None, serialization_alias=camel("availability_id")
+    )
+    name: str
+    status: AvailabilityStatus
+    submitted_at: datetime | None = Field(
+        default=None, serialization_alias=camel("submitted_at")
+    )
+    note: str | None = None
+    entries: list[CoordinationAvailabilityEntryOut] = Field(default_factory=list)
+
+
+class WeekAvailabilitiesOut(ApiModel):
+    """Consulta administrativa das disponibilidades de uma semana."""
+
+    week_start: date = Field(serialization_alias=camel("week_start"))
+    week_end: date = Field(serialization_alias=camel("week_end"))
+    cycle_id: uuid.UUID | None = Field(
+        default=None, serialization_alias=camel("cycle_id")
+    )
+    cycle_phase: str | None = Field(
+        default=None, serialization_alias=camel("cycle_phase")
+    )
+    instructors: list[CoordinationInstructorAvailabilityOut]
+
+
+class CreateSessionFromAvailabilityIn(ApiModel):
+    """Conversão de uma oferta em sessão regular.
+
+    Capacidade é dado administrativo explícito; não há valor padrão.
+    Local só é necessário quando a oferta não informou um.
+    """
+
+    availability_entry_id: uuid.UUID = Field(
+        serialization_alias=camel("availability_entry_id")
+    )
+    capacity: int = Field(gt=0)
+    location_id: uuid.UUID | None = Field(
+        default=None, serialization_alias=camel("location_id")
+    )
 
 
 class AppNotificationOut(ApiModel):

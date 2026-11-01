@@ -1,0 +1,295 @@
+warning: in the working copy of '.github/workflows/backend-ci.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/models/phase2.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/models/session_week.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/services/schedule_service.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_app_health.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/.github/workflows/backend-ci.yml b/.github/workflows/backend-ci.yml[m
+[1mindex a5e8061..80ce347 100644[m
+[1m--- a/.github/workflows/backend-ci.yml[m
+[1m+++ b/.github/workflows/backend-ci.yml[m
+[36m@@ -93,7 +93,7 @@[m [mjobs:[m
+           engine = create_engine(url)[m
+           with engine.connect() as conn:[m
+               rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()[m
+[31m-          expected = "d5e6f7a8b9c0"[m
+[32m+[m[32m          expected = "f7a8b9c0d1e2"[m
+           if rev != expected:[m
+               print(f"ERRO: revisao atual e '{rev}', esperada '{expected}'")[m
+               sys.exit(1)[m
+[36m@@ -104,6 +104,8 @@[m [mjobs:[m
+         run: |[m
+           python -m pytest -q -rs \[m
+             tests/test_app_health.py \[m
+[32m+[m[32m            tests/test_availability_sessions.py \[m
+[32m+[m[32m            tests/test_cycle_management.py \[m
+             tests/test_phase2.py \[m
+             tests/test_phase3.py \[m
+             tests/test_phase4.py[m
+[36m@@ -112,6 +114,8 @@[m [mjobs:[m
+         run: |[m
+           output=$(python -m pytest -q --tb=no \[m
+             tests/test_app_health.py \[m
+[32m+[m[32m            tests/test_availability_sessions.py \[m
+[32m+[m[32m            tests/test_cycle_management.py \[m
+             tests/test_phase2.py \[m
+             tests/test_phase3.py \[m
+             tests/test_phase4.py 2>&1)[m
+[1mdiff --git a/backend/app/api/routes/integration.py b/backend/app/api/routes/integration.py[m
+[1mindex 63b91e6..1c3dc5a 100644[m
+[1m--- a/backend/app/api/routes/integration.py[m
+[1m+++ b/backend/app/api/routes/integration.py[m
+[36m@@ -3,7 +3,7 @@[m
+ import uuid[m
+ from datetime import date, timedelta[m
+ [m
+[31m-from fastapi import APIRouter, Depends, HTTPException[m
+[32m+[m[32mfrom fastapi import APIRouter, Depends, HTTPException, Response[m
+ from sqlalchemy import func, select[m
+ from sqlalchemy.orm import Session[m
+ [m
+[36m@@ -18,10 +18,13 @@[m [mfrom app.models.session_week import ReikiSession, SessionStatus[m
+ from app.models.user import Role, User[m
+ from app.schemas.domain import InstructorSummaryOut, LocationOut, SessionOut, SessionStatus as SessionStatusOut, WeekSessionsOut[m
+ from app.schemas.integration import ([m
+[31m-    AppNotificationOut, AuditEventOut, CoverRequestOut, CycleTotalsOut,[m
+[31m-    InstructorAvailabilityRowOut, InstructorSessionOut, RosterEntryOut, WeeklyCycleOut,[m
+[32m+[m[32m    AppNotificationOut, AuditEventOut, CoordinationAvailabilityEntryOut,[m
+[32m+[m[32m    CoordinationInstructorAvailabilityOut, CoverRequestOut, CreateSessionFromAvailabilityIn,[m
+[32m+[m[32m    CycleCreateIn, CycleManagementOut, CycleTotalsOut, InstructorAvailabilityRowOut,[m
+[32m+[m[32m    InstructorAvailabilityStatusOut, InstructorSessionOut, RosterEntryOut,[m
+[32m+[m[32m    WeekAvailabilitiesOut, WeeklyCycleOut,[m
+ )[m
+[31m-from app.services import phase2_service[m
+[32m+[m[32mfrom app.services import coordination_service, phase2_service[m
+ [m
+ instructor_router = APIRouter(prefix="/instructor", tags=["instructor"])[m
+ coordination_router = APIRouter(prefix="/coordination", tags=["coordination"])[m
+[36m@@ -61,6 +64,43 @@[m [mdef _can_cancel(item: ReikiSession) -> tuple[bool, str | None]:[m
+     return True, None[m
+ [m
+ [m
+[32m+[m[32mdef _week_availabilities_out([m
+[32m+[m[32m    view: coordination_service.WeekAvailabilityView,[m
+[32m+[m[32m) -> WeekAvailabilitiesOut:[m
+[32m+[m[32m    return WeekAvailabilitiesOut([m
+[32m+[m[32m        week_start=view.week_start,[m
+[32m+[m[32m        week_end=view.week_end,[m
+[32m+[m[32m        cycle_id=view.cycle.id if view.cycle else None,[m
+[32m+[m[32m        cycle_phase=view.cycle.phase.value if view.cycle else None,[m
+[32m+[m[32m        instructors=[[m
+[32m+[m[32m            CoordinationInstructorAvailabilityOut([m
+[32m+[m[32m                instructor_id=item.instructor_id,[m
+[32m+[m[32m                availability_id=item.availability_id,[m
+[32m+[m[32m                name=item.name,[m
+[32m+[m[32m                status=item.status,[m
+[32m+[m[32m                submitted_at=item.submitted_at,[m
+[32m+[m[32m                note=item.note,[m
+[32m+[m[32m                entries=[[m
+[32m+[m[32m                    CoordinationAvailabilityEntryOut([m
+[32m+[m[32m                        id=entry.id,[m
+[32m+[m[32m                        kind=entry.kind,[m
+[32m+[m[32m                        starts_at=entry.starts_at,[m
+[32m+[m[32m                        ends_at=entry.ends_at,[m
+[32m+[m[32m                        location=LocationOut.model_validate(entry.location)[m
+[32m+[m[32m                        if entry.location[m
+[32m+[m[32m                        else None,[m
+[32m+[m[32m                        note=entry.note,[m
+[32m+[m[32m                        is_current=entry.is_current,[m
+[32m+[m[32m                        converted_session_id=entry.converted_session_id,[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                    for entry in item.entries[m
+[32m+[m[32m                ],[m
+[32m+[m[32m            )[m
+[32m+[m[32m            for item in view.instructors[m
+[32m+[m[32m        ],[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+ @instructor_router.get("/sessions", response_model=list[InstructorSessionOut])[m
+ def instructor_sessions(user: User = Depends(require_role(Role.INSTRUCTOR, Role.COORDINATOR)),[m
+                         db: Session = Depends(get_db)) -> list[InstructorSessionOut]:[m
+[36m@@ -86,12 +126,14 @@[m [mdef coordination_sessions(weekStart: str, _user: User = Depends(require_role(Rol[m
+     ws = phase2_service.schedule_service.parse_week_start(weekStart)[m
+     if ws is None:[m
+         raise HTTPException(422, "Semana inválida.")[m
+[32m+[m[32m    week_start_utc, week_end_utc = phase2_service.schedule_service.week_bounds_utc(ws)[m
+     rows = db.scalars(select(ReikiSession).where([m
+[31m-        ReikiSession.starts_at >= ws, ReikiSession.starts_at < ws + timedelta(days=7)[m
+[32m+[m[32m        ReikiSession.starts_at >= week_start_utc,[m
+[32m+[m[32m        ReikiSession.starts_at < week_end_utc,[m
+     ).order_by(ReikiSession.starts_at)).unique().all()[m
+     cycle = db.scalar(select(WeeklyCycle).where(WeeklyCycle.week_start == ws))[m
+     return WeekSessionsOut(week_start=ws, week_end=ws + timedelta(days=6),[m
+[31m-                           sessions=[_session_out(db, row) for row in rows], published=cycle is not None)[m
+[32m+[m[32m                           sessions=[_session_out(db, row) for row in rows], published=phase2_service.schedule_service.is_published(cycle))[m
+ [m
+ [m
+ @coordination_router.get("/sessions/{session_id}/roster", response_model=list[RosterEntryOut])[m
+[36m@@ -130,8 +172,10 @@[m [mdef coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C[m
+     if ws is None:[m
+         raise HTTPException(422, "Semana inválida.")[m
+     cycle = db.scalar(select(WeeklyCycle).where(WeeklyCycle.week_start == ws))[m
+[32m+[m[32m    week_start_utc, week_end_utc = phase2_service.schedule_service.week_bounds_utc(ws)[m
+     rows = db.scalars(select(ReikiSession).where([m
+[31m-        ReikiSession.starts_at >= ws, ReikiSession.starts_at < ws + timedelta(days=7)[m
+[32m+[m[32m        ReikiSession.starts_at >= week_start_utc,[m
+[32m+[m[32m        ReikiSession.starts_at < week_end_utc,[m
+     )).all()[m
+     confirmed = sum(db.scalar(select(func.count()).select_from(Enrollment).where([m
+         Enrollment.session_id == row.id, Enrollment.status == EnrollmentStatus.CONFIRMED[m
+[36m@@ -146,10 +190,10 @@[m [mdef coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C[m
+             ReallocationCase.status == ReallocationStatus.PENDING,[m
+             ReallocationCase.origin_session_id.in_([row.id for row in rows]),[m
+         )) or 0[m
+[31m-    instructors = db.scalars(select(User).where(User.role == Role.INSTRUCTOR, User.is_active.is_(True))).all()[m
+[32m+[m[32m    summary = phase2_service.instructor_availability_summary(db, ws)[m
+     return WeeklyCycleOut([m
+         week_start=ws, week_end=ws + timedelta(days=6),[m
+[31m-        phase=cycle.phase if cycle else "collecting_availability",[m
+[32m+[m[32m        phase=cycle.phase.value if cycle else "collecting_availability",[m
+         availability_deadline=None, enrollment_opens_at=None,[m
+         totals=CycleTotalsOut([m
+             sessions=len(rows), capacity=sum(capacity_values) if len(capacity_values) == len(rows) else None,[m
+[36m@@ -158,11 +202,102 @@[m [mdef coordination_cycle(weekStart: str, _user: User = Depends(require_role(Role.C[m
+             open_cover_requests=db.scalar(select(func.count()).select_from(CoverRequest).where(CoverRequest.status == CoverRequestStatus.OPEN)) or 0,[m
+             pending_reallocations=pending,[m
+         ),[m
+[31m-        instructors=[InstructorAvailabilityRowOut(instructor={"id": str(item.id), "name": item.name},[m
+[31m-            status="pending", submitted_at=None, sessions_offered=0) for item in instructors],[m
+[32m+[m[32m        instructors=[InstructorAvailabilityRowOut([m
+[32m+[m[32m            instructor={"id": str(item.instructor_id), "name": item.name},[m
+[32m+[m[32m            instructor_id=item.instructor_id, name=item.name, status=item.status,[m
+[32m+[m[32m            submitted_at=item.submitted_at, sessions_offered=item.sessions_offered,[m
+[32m+[m[32m        ) for item in summary],[m
+     )[m
+ [m
+ [m
+[32m+[m[32m@coordination_router.post("/cycles", response_model=CycleManagementOut, status_code=200)[m
+[32m+[m[32mdef create_coordination_cycle([m
+[32m+[m[32m    payload: CycleCreateIn,[m
+[32m+[m[32m    response: Response,[m
+[32m+[m[32m    _user: User = Depends(require_role(Role.COORDINATOR)),[m
+[32m+[m[32m    _csrf: None = Depends(enforce_same_origin),[m
+[32m+[m[32m    db: Session = Depends(get_db),[m
+[32m+[m[32m) -> CycleManagementOut:[m
+[32m+[m[32m    ws = phase2_service.schedule_service.parse_week_start(payload.week_start)[m
+[32m+[m[32m    if ws is None:[m
+[32m+[m[32m        raise HTTPException(422, "Semana inválida.")[m
+[32m+[m[32m    cycle, created = phase2_service.create_or_get_cycle(db, ws)[m
+[32m+[m[32m    summary = phase2_service.instructor_availability_summary(db, ws)[m
+[32m+[m[32m    response.status_code = 201 if created else 200[m
+[32m+[m[32m    return CycleManagementOut([m
+[32m+[m[32m        id=cycle.id,[m
+[32m+[m[32m        week_start=cycle.week_start,[m
+[32m+[m[32m        status=cycle.phase.value,[m
+[32m+[m[32m        instructors=[[m
+[32m+[m[32m            InstructorAvailabilityStatusOut([m
+[32m+[m[32m                instructor_id=item.instructor_id, name=item.name, status=item.status,[m
+[32m+[m[32m                submitted_at=item.submitted_at, sessions_offered=item.sessions_offered,[m
+[32m+[m[32m            )[m
+[32m+[m[32m            for item in summary[m
+[32m+[m[32m        ],[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m@coordination_router.get([m
+[32m+[m[32m    "/cycles/{weekStart}/availabilities",[m
+[32m+[m[32m    response_model=WeekAvailabilitiesOut,[m
+[32m+[m[32m)[m
+[32m+[m[32mdef coordination_availabilities([m
+[32m+[m[32m    weekStart: str,[m
+[32m+[m[32m    _user: User = Depends(require_role(Role.COORDINATOR)),[m
+[32m+[m[32m    db: Session = Depends(get_db),[m
+[32m+[m[32m) -> WeekAvailabilitiesOut:[m
+[32m+[m[32m    """Disponibilidades administrativas da semana (normalizada para segunda)."""[m
+[32m+[m[32m    ws = phase2_service.schedule_service.parse_week_start(weekStart)[m
+[32m+[m[32m    if ws is None:[m
+[32m+[m[32m        raise HTTPException(422, "Semana inválida.")[m
+[32m+[m[32m    return _week_availabilities_out([m
+[32m+[m[32m        coordination_service.get_week_availabilities(db, ws)[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m@coordination_router.post([m
+[32m+[m[32m    "/cycles/{weekStart}/sessions",[m
+[32m+[m[32m    response_model=SessionOut,[m
+[32m+[m[32m    status_code=201,[m
+[32m+[m[32m)[m
+[32m+[m[32mdef create_coordination_session([m
+[32m+[m[32m    weekStart: str,[m
+[32m+[m[32m    payload: CreateSessionFromAvailabilityIn,[m
+[32m+[m[32m    user: User = Depends(require_role(Role.COORDINATOR)),[m
+[32m+[m[32m    _csrf: None = Depends(enforce_same_origin),[m
+[32m+[m[32m    db: Session = Depends(get_db),[m
+[32m+[m[32m) -> SessionOut:[m
+[32m+[m[32m    """Converte uma oferta da semana em sessão regular (sem publicar agenda)."""[m
+[32m+[m[32m    ws = phase2_service.schedule_service.parse_week_start(weekStart)[m
+[32m+[m[32m    if ws is None:[m
+[32m+[m[32m        raise HTTPException(422, "Semana inválida.")[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        session = coordination_service.create_regular_session([m
+[32m+[m[32m            db,[m
+[32m+[m[32m            user,[m
+[32m+[m[32m            ws,[m
+[32m+[m[32m            availability_entry_id=payload.availability_entry_id,[m
+[32m+[m[32m            capacity=payload.capacity,[m
+[32m+[m[32m            location_id=payload.location_id,[m
+[32m+[m[32m        )[m
+[32m+[m[32m    except coordination_service.CoordinationError as exc:[m
+[32m+[m[32m        code_status = {[m
+[32m+[m[32m            "forbidden": 403,[m
+[32m+[m[32m            "cycle_not_found": 404,[m
+[32m+[m[32m            "entry_not_found": 404,[m
+[32m+[m[32m            "location_not_found": 404,[m
+[32m+[m[32m            "invalid_capacity": 422,[m
+[32m+[m[32m            "location_required": 422,[m
+[32m+[m[32m        }.get(exc.code, 409)[m
+[32m+[m[32m        raise HTTPException([m
+[32m+[m[32m            status_code=code_status,[m
+[32m+[m[32m            detail=str(exc),[m
+[32m+[m[32m            headers={"X-Error-Code": exc.code},[m
+[32m+[m[32m        )[m
+[32m+[m[32m    return _session_out(db, session)[m
+[32m+[m
+[32m+[m
+ @coordination_router.get("/events", response_model=list[AuditEventOut])[m
+ def coordination_events(_user: User = Depends(require_role(Role.COORDINATOR)),[m
+                         db: Session = Depends(get_db)) -> list[AuditEventOut]:[m
+[1mdiff --git a/backend/app/api/routes/phase2.py b/backend/app/api/routes/phase2.py[m
+[1mindex ec8180a..f78947a 100644[m
+[1m--- a/backend/app/api/routes/phase2.py[m
+[1m+++ b/backend/app/api/routes/phase2.py[m
+[36m@@ -31,7 +31,7 @@[m [mfrom app.schemas.phase2 import ([m
+     PublishAvailabilityIn,[m
+     WeeklyAvailabilityOut,[m
+ )[m
+[31m-from app.services import phase2_service[m
+[32m+[m[32mfrom app.services import coordination_service, phase2_service, schedule_service[m
+ [m
+ router = APIRouter(tags=["phase2"])[m
+ availability_router = APIRouter(prefix="/instructor", tags=["availability"])[m
+[36m@@ -75,6 +75,7 @@[m [mdef _availability_out(db: Session, instructor_id: uuid.UUID, ws: date) -> Weekly[m
+                 note=e.note,[m
+             )[m
+             for e in sub.entries[m
+[32m+[m[32m            if e.is_current[m
+         ],[m
+     )[m
+ [m
+[36m@@ -87,13 +88,13 @@[m [mdef get_availability([m
+ ) -> WeeklyAvailabilityOut:[m
+     if weekStart is None:[m
+         # Semana corrente (segunda da semana atual, no fuso UTC).[m
+[31m-        today = datetime.now(timezone.utc).date()[m
+[32m+[m[32m        today = datetime.now(schedule_service.INSTITUTIONAL_TIMEZONE).date()[m
+         ws = phase2_service.week_start_of(today)[m
+     else:[m
+         ws = phase2_service.schedule_service.parse_week_start(weekStart)[m
+         if ws is None:[m
+             raise HTTPException(status_code=422, detail="Dados inválidos.")[m
+[31m-    if user.role != Role.INSTRUCTOR and user.role != Role.COORDINATOR:[m
+[32m+[m[32m    if user.role != Role.INSTRUCTOR:[m
+         raise HTTPException(status_code=403, detail="Você não tem permissão para esta ação.")[m
+     return _availability_out(db, user.id, ws)[m
+ [m
+[36m@@ -105,7 +106,7 @@[m [mdef publish

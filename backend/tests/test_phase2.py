@@ -26,14 +26,13 @@ from app.models.user import Role, User
 from app.services import phase2_service
 from tests.conftest import login
 from tests.test_auth import PASSWORD
+from .helpers import _setup_cycle, _make_session, _make_participant
 
 WS = date(2026, 10, 26)  # segunda-feira
 
 pytestmark_postgres = pytest.mark.postgres_pending
 
 
-def _setup_cycle(db, phase=CyclePhase.COLLECTING_AVAILABILITY):
-    return WeeklyCycle(week_start=WS, phase=phase)
 
 
 def _make_instructor(db, n=1) -> User:
@@ -148,12 +147,18 @@ def test_submit_availability(db) -> None:
     )
     assert sub.status == "submitted"
     assert len(sub.entries) == 2
-    # Upsert: submeter de novo atualiza em vez de duplicar.
+    # O reenvio mant?m a submiss?o e preserva o hist?rico das entradas.
     sub2 = phase2_service.submit_availability(
         db, instr, WS, unavailable=False, entries=_entries(1)
     )
     assert sub2.id == sub.id
-    assert len(sub2.entries) == 1
+
+    current_entries = [entry for entry in sub2.entries if entry.is_current]
+    historical_entries = [entry for entry in sub2.entries if not entry.is_current]
+
+    assert len(current_entries) == 1
+    assert len(historical_entries) == 2
+    assert len(sub2.entries) == 3
 
 
 def test_declare_unavailable(db) -> None:
@@ -240,6 +245,9 @@ def test_publish_week_normalizes_non_monday_date(postgres_db) -> None:
     cycle = postgres_db.scalar(
         select(WeeklyCycle).where(WeeklyCycle.week_start == WS)
     )
+    # A publicação valida as sessões vinculadas ao ciclo, não apenas as que
+    # aparecem na listagem por intervalo da semana.
+    session_row.cycle_id = cycle.id
     postgres_db.add(
         WeeklyAvailability(
             cycle_id=cycle.id,
@@ -286,34 +294,8 @@ def test_pending_is_not_unavailable(db) -> None:
 # --------------------------- Inscrições ---------------------------
 
 
-def _make_session(db, loc=None, capacity=2, status=SessionStatus.OPEN, phase=CyclePhase.ENROLLMENT_OPEN):
-    if loc is None:
-        loc = Location(name=f"Sala {uuid.uuid4().hex[:6]}")
-        db.add(loc)
-    db.add(_setup_cycle(db, phase))
-    db.flush()  # garante ids para as FKs
-    s = ReikiSession(
-        location_id=loc.id,
-        starts_at=datetime(2026, 10, 28, 14, 0, tzinfo=timezone.utc),
-        ends_at=datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc),
-        capacity=capacity,
-        status=status,
-    )
-    db.add(s)
-    db.commit()
-    return s
 
 
-def _make_participant(db, n=None) -> User:
-    u = User(
-        name=f"Participante {n or uuid.uuid4().hex[:6]}",
-        email=f"p{uuid.uuid4().hex[:8]}@x.local",
-        password_hash="x",
-        role=Role.PARTICIPANT,
-    )
-    db.add(u)
-    db.commit()
-    return u
 
 
 def test_create_enrollment_confirmed(db) -> None:
@@ -783,3 +765,95 @@ def test_publish_availability_note_limit(db) -> None:
             note=invalid_note,
         )
     assert "at most 500 characters" in str(exc.value)
+
+
+
+
+# ----------------------------- Concorrência: inscrição antes da abertura --------------------------------
+
+
+
+@pytest.mark.postgres_pending
+def test_create_enrollment_rejects_collecting_availability(
+    postgres_db, postgres_session_factory
+):
+    # create_enrollment rejeita com cycle_not_open quando ciclo está em collecting_availability
+    location = Location(name='Local ' + uuid.uuid4().hex[:8])
+    postgres_db.add(location)
+    postgres_db.commit()
+
+    cycle = WeeklyCycle(week_start=date(2026, 10, 26), phase=CyclePhase.COLLECTING_AVAILABILITY)
+    postgres_db.add(cycle)
+    postgres_db.commit()
+
+    session = ReikiSession(
+        cycle_id=cycle.id,
+        location_id=location.id,
+        starts_at=datetime(2026, 10, 28, 14, 0, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc),
+        capacity=4,
+        status=SessionStatus.OPEN,
+        is_extra=False,
+    )
+    postgres_db.add(session)
+    postgres_db.commit()
+
+    participant = _make_participant(postgres_db, n='collecting')
+
+    db = postgres_session_factory()
+    try:
+        with pytest.raises(phase2_service.EnrollmentError) as exc:
+            phase2_service.create_enrollment(db, participant, session.id)
+        db.rollback()
+    finally:
+        db.close()
+
+    assert exc.value.code == 'cycle_not_open'
+
+    postgres_db.expire_all()
+    stored_cycle = postgres_db.get(WeeklyCycle, cycle.id)
+    assert stored_cycle.phase == CyclePhase.COLLECTING_AVAILABILITY
+
+
+
+
+@pytest.mark.postgres_pending
+def test_create_enrollment_rejects_enrollment_pending(
+    postgres_db, postgres_session_factory
+):
+    # create_enrollment rejeita com cycle_not_open quando ciclo está em enrollment_pending
+    location = Location(name='Local ' + uuid.uuid4().hex[:8])
+    postgres_db.add(location)
+    postgres_db.commit()
+
+    cycle = WeeklyCycle(week_start=date(2026, 10, 26), phase=CyclePhase.ENROLLMENT_PENDING)
+    postgres_db.add(cycle)
+    postgres_db.commit()
+
+    session = ReikiSession(
+        cycle_id=cycle.id,
+        location_id=location.id,
+        starts_at=datetime(2026, 10, 28, 14, 0, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc),
+        capacity=4,
+        status=SessionStatus.OPEN,
+        is_extra=False,
+    )
+    postgres_db.add(session)
+    postgres_db.commit()
+
+    participant = _make_participant(postgres_db, n='pending')
+
+    db = postgres_session_factory()
+    try:
+        with pytest.raises(phase2_service.EnrollmentError) as exc:
+            phase2_service.create_enrollment(db, participant, session.id)
+        db.rollback()
+    finally:
+        db.close()
+
+    assert exc.value.code == 'cycle_not_open'
+
+    postgres_db.expire_all()
+    stored_cycle = postgres_db.get(WeeklyCycle, cycle.id)
+    assert stored_cycle.phase == CyclePhase.ENROLLMENT_PENDING

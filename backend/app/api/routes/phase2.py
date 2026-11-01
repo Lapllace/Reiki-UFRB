@@ -31,7 +31,7 @@ from app.schemas.phase2 import (
     PublishAvailabilityIn,
     WeeklyAvailabilityOut,
 )
-from app.services import phase2_service
+from app.services import coordination_service, phase2_service, schedule_service
 
 router = APIRouter(tags=["phase2"])
 availability_router = APIRouter(prefix="/instructor", tags=["availability"])
@@ -75,6 +75,7 @@ def _availability_out(db: Session, instructor_id: uuid.UUID, ws: date) -> Weekly
                 note=e.note,
             )
             for e in sub.entries
+            if e.is_current
         ],
     )
 
@@ -87,13 +88,13 @@ def get_availability(
 ) -> WeeklyAvailabilityOut:
     if weekStart is None:
         # Semana corrente (segunda da semana atual, no fuso UTC).
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(schedule_service.INSTITUTIONAL_TIMEZONE).date()
         ws = phase2_service.week_start_of(today)
     else:
         ws = phase2_service.schedule_service.parse_week_start(weekStart)
         if ws is None:
             raise HTTPException(status_code=422, detail="Dados inválidos.")
-    if user.role != Role.INSTRUCTOR and user.role != Role.COORDINATOR:
+    if user.role not in (Role.INSTRUCTOR, Role.COORDINATOR):
         raise HTTPException(status_code=403, detail="Você não tem permissão para esta ação.")
     return _availability_out(db, user.id, ws)
 
@@ -105,7 +106,7 @@ def publish_availability(
     _csrf: None = Depends(enforce_same_origin),
     db: Session = Depends(get_db),
 ) -> WeeklyAvailabilityOut:
-    if user.role != Role.INSTRUCTOR and user.role != Role.COORDINATOR:
+    if user.role != Role.INSTRUCTOR:
         raise HTTPException(status_code=403, detail="Você não tem permissão para esta ação.")
     ws = phase2_service.schedule_service.parse_week_start(payload.week_start)
     if ws is None:

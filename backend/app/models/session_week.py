@@ -8,7 +8,16 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -46,6 +55,21 @@ class ReikiSession(Base, UUIDPk, Timestamped):
     instructor_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
+    # Oferta de disponibilidade que originou esta sessão regular.
+    # Nulo em sessões extras e nas criadas sem vínculo com uma oferta.
+    # A unicidade impede converter a mesma oferta em duas sessões. Reenvios
+    # marcam a oferta como histórica (``is_current=False``) em vez de apagá-la,
+    # então o vínculo é preservado; o ON DELETE SET NULL permanece como
+    # proteção residual.
+    availability_entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "availability_entries.id",
+            name="fk_reiki_sessions_availability_entry_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
 
     # Horários com fuso explícito (timezone=True). ISO 8601 com offset nas respostas.
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -79,3 +103,10 @@ class ReikiSession(Base, UUIDPk, Timestamped):
     location: Mapped[Location] = relationship(Location, lazy="joined")
     instructor: Mapped[User | None] = relationship(User, lazy="joined")
     cycle: Mapped[WeeklyCycle | None] = relationship(WeeklyCycle, lazy="joined")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "availability_entry_id",
+            name="uq_reiki_sessions_availability_entry",
+        ),
+    )

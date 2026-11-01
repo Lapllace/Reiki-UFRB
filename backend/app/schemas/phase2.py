@@ -56,7 +56,7 @@ class WeeklyAvailabilityOut(ApiModel):
         default=None, serialization_alias=camel("submitted_at")
     )
     note: str | None = None
-    entries: list[AvailabilityEntryOut] = []
+    entries: list[AvailabilityEntryOut] = Field(default_factory=list)
 
 
 class PublishAvailabilityIn(ApiModel):
@@ -65,7 +65,7 @@ class PublishAvailabilityIn(ApiModel):
     week_start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     unavailable: bool = False
     note: str | None = Field(default=None, max_length=500)
-    entries: list[AvailabilityEntryIn] = []
+    entries: list[AvailabilityEntryIn] = Field(default_factory=list)
 
 
 class EnrollmentStatus(StrEnum):

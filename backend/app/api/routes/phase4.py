@@ -149,7 +149,11 @@ def create_extra_session(
             location_id=payload.location_id, capacity=payload.capacity,
         )
     except phase4_service.ReallocationError as exc:
-        code_status = {"forbidden": 403, "location_inactive": 409}.get(exc.code, 422)
+        code_status = {
+            "forbidden": 403,
+            "location_inactive": 409,
+            "location_conflict": 409,
+        }.get(exc.code, 422)
         raise HTTPException(
             status_code=code_status, detail=str(exc),
             headers={"X-Error-Code": exc.code},

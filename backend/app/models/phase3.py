@@ -79,10 +79,9 @@ class CoverRequest(Base, UUIDPk, Timestamped):
 
     # Uma única solicitação aberta/registrada por sessão.
     __table_args__ = (
-        Index(
-            "uq_cover_requests_session",
+        UniqueConstraint(
             "session_id",
-            unique=True,
+            name="uq_cover_requests_session",
         ),
     )
 

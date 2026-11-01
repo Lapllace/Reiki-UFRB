@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.cycle import CyclePhase, WeeklyCycle
 from app.models.location import Location
 from app.models.phase2 import Enrollment, EnrollmentStatus
 from app.models.phase4 import (
@@ -18,6 +19,7 @@ from app.models.phase4 import (
 from app.models.phase41 import AuditEvent
 from app.models.session_week import ReikiSession, SessionStatus
 from app.models.user import Role, User
+from app.services.coordination_service import has_session_conflict
 from app.services.phase2_service import renumber_waitlist
 
 
@@ -135,9 +137,27 @@ def create_extra_session(
         raise ReallocationError("invalid_period", "O horário final deve ser posterior ao inicial.")
     if capacity <= 0:
         raise ReallocationError("invalid_capacity", "A capacidade deve ser maior que zero.")
-    location = db.get(Location, location_id)
+    # Único outro caminho que cria ReikiSession (além da conversão de oferta).
+    # Sessões extras não têm ciclo nem ministrante nesta etapa, mas continuam
+    # ocupando o LOCAL. O lock da linha do local serializa com a criação de
+    # sessões regulares, que bloqueia ciclo → oferta → ministrante → local.
+    location = db.execute(
+        select(Location)
+        .where(Location.id == location_id)
+        .with_for_update(of=Location)
+    ).scalar_one_or_none()
     if location is None or not location.is_active:
         raise ReallocationError("location_inactive", "O local não existe ou está inativo.")
+    if has_session_conflict(
+        db,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        location_id=location.id,
+    ):
+        raise ReallocationError(
+            "location_conflict",
+            "O local já tem sessão ativa nesse intervalo.",
+        )
     session = ReikiSession(
         starts_at=starts_at,
         ends_at=ends_at,
@@ -165,32 +185,65 @@ def open_session(
     if coordinator.role != Role.COORDINATOR:
         raise ReallocationError("forbidden", "Apenas a coordenação pode abrir sessões.")
 
-    # Lock pessimista da sessão para evitar transições concorrentes.
-    # of=ReikiSession evita bloquear relacionamentos joined nullable (instructor, cycle).
+    # 1. Leitura inicial SEM lock para descobrir o cycle_id antes de qualquer bloqueio.
+    session_preview = db.execute(
+        select(ReikiSession).where(ReikiSession.id == session_id)
+    ).scalar_one_or_none()
+    if session_preview is None:
+        raise ReallocationError('not_found', 'Sessão não encontrada.')
+
+    # 2. Se há ciclo associado, bloqueia o WeeklyCycle PRIMEIRO (ordem: ciclo → sessão).
+    cycle = None
+    if not session_preview.is_extra and session_preview.cycle_id is not None:
+        cycle = db.execute(
+            select(WeeklyCycle)
+            .where(WeeklyCycle.id == session_preview.cycle_id)
+            .with_for_update(of=WeeklyCycle)
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if cycle is not None:
+            db.refresh(cycle)
+
+    # 3. Agora bloqueia a ReikiSession com FOR UPDATE e populate_existing.
     session = db.execute(
-        select(ReikiSession).where(ReikiSession.id == session_id).with_for_update(of=ReikiSession)
+        select(ReikiSession)
+        .where(ReikiSession.id == session_id)
+        .with_for_update(of=ReikiSession)
+        .execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if session is None:
-        raise ReallocationError("not_found", "Sessão não encontrada.")
+        raise ReallocationError('not_found', 'Sessão não encontrada.')
 
-    # Refresh para garantir que o objeto reflita o estado atual do banco após o lock
-    db.refresh(session)
+    # 4. Confirma que o cycle_id não mudou entre a leitura prévia e o lock.
+    if session.cycle_id != session_preview.cycle_id:
+        raise ReallocationError(
+            'cycle_changed',
+            'O ciclo associado à sessão foi alterado entre a leitura e o bloqueio.',
+        )
 
     # Regra: FULL não pode ser reaberto automaticamente
     if session.status == SessionStatus.FULL:
         raise ReallocationError(
-            "session_full",
-            "Não é possível reabrir uma sessão FULL. "
-            "A capacidade máxima foi atingida e a sessão requer decisão administrativa.",
+            'session_full',
+            'Não é possível reabrir uma sessão FULL. '
+            'A capacidade máxima foi atingida e a sessão requer decisão administrativa.',
         )
 
     # Apenas SCHEDULED pode abrir (validação após o lock)
     if session.status != SessionStatus.SCHEDULED:
         raise ReallocationError(
-            "invalid_status",
+            'invalid_status',
             f"Sessão não pode ser aberta no estado '{session.status}'. Apenas SCHEDULED.",
         )
 
+    # Sessões regulares vinculadas a um ciclo só podem ser abertas individualmente
+    # quando o ciclo estiver em ENROLLMENT_OPEN. Sessões extras são independentes.
+    if cycle is not None and cycle.phase != CyclePhase.ENROLLMENT_OPEN:
+        raise ReallocationError(
+            'cycle_not_open',
+            f"Sessões regulares só podem ser abertas individualmente quando o ciclo estiver em ENROLLMENT_OPEN. "
+            f"Fase atual: {cycle.phase}. Use a abertura explícita do ciclo para abrir todas as sessões.",
+        )
     # Confirmar capacidade no banco
     from sqlalchemy import func as _func
 
