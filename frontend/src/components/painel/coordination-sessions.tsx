@@ -86,11 +86,11 @@ export function CoordinationSessions() {
         <ErrorState error={error} onRetry={reload} />
       ) : loading || !data ? (
         <LoadingBlock rows={3} label="Carregando sessões…" />
-      ) : !data.published || data.sessions.length === 0 ? (
+      ) : data.sessions.length === 0 ? (
         <EmptyState
           icon={CalendarOff}
-          title="Nenhuma sessão nesta semana"
-          description="A agenda desta semana ainda não foi publicada ou não possui sessões."
+          title="Nenhuma sessão cadastrada"
+          description="Não há sessões cadastradas para esta semana."
         />
       ) : sessions.length === 0 ? (
         <EmptyState

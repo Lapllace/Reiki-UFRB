@@ -84,7 +84,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   if (!response.ok) {
     const kind = kindFromStatus(response.status);
-    const { message, code } = messageFromBody(payload);
+    // Tenta ler o código de negócio do header X-Error-Code, depois do corpo JSON
+    const headerCode = response.headers.get("X-Error-Code");
+    const { message, code: bodyCode } = messageFromBody(payload);
+    const code = headerCode ?? bodyCode;
     throw new ApiError(kind, message ?? fallbackMessage(kind), {
       status: response.status,
       code,

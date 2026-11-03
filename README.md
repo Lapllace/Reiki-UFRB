@@ -14,11 +14,12 @@ Para documentação detalhada do frontend, incluindo tecnologias, comandos de ex
 
 - **[frontend/README.md](frontend/README.md)**
 
-### Backend (planejado)
+### Backend (implementado em validação)
 
-O backend será desenvolvido em Python com FastAPI e PostgreSQL. A implementação ainda não foi iniciada.
-
-Os contratos de API propostos no frontend precisam ser confirmados antes da integração oficial.
+O backend está implementado em Python com FastAPI, SQLAlchemy e Alembic. Inclui
+autenticação, disponibilidade, inscrições/fila, cobertura, reorganização,
+sessões extras e consultas persistentes para as áreas do produto. A migração e
+a concorrência PostgreSQL ainda precisam ser validadas em um banco real.
 
 ## Estado atual
 
@@ -30,13 +31,14 @@ Os contratos de API propostos no frontend precisam ser confirmados antes da inte
 - ✅ Teste de produção aprovado (5/5 verificações)
 - ✅ Teste de fumaça de rotas aprovado (18 rotas válidas)
 - ⏳ Integração com API real (pendente de definição)
-- ⏳ Autenticação e permissões (pendentes de implementação no backend)
+- ✅ Autenticação e permissões implementadas no backend
 
 ### Backend
 
-- ❌ Não implementado
-- ⏳ Planejado: FastAPI + PostgreSQL
-- ⏳ Contratos de API a definir
+- ✅ Fundação FastAPI, autenticação e autorização
+- ✅ Disponibilidade, inscrições, fila e cobertura
+- ✅ Reorganização, sessões extras, notificações e eventos auditáveis
+- ⏳ Migração/concorrência PostgreSQL e regras institucionais pendentes
 
 ## Como executar o frontend
 
@@ -55,7 +57,7 @@ Acesse `http://localhost:3000`.
 ## Pendências para publicação
 
 - Confirmar o nome e a identidade institucional
-- Implementar e integrar a API real (backend)
+- Executar e validar a API real com PostgreSQL
 - Validar a autenticação, as permissões e a persistência PostgreSQL
 - Definir as regras institucionais pendentes
 - Realizar revisão visual final em múltiplos dispositivos

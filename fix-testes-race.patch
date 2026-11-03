@@ -1,0 +1,52 @@
+--- a/backend/tests/test_phase3.py	2026-10-28 12:26:26.812477498 +0000
++++ b/backend/tests/test_phase3.py	2026-10-28 12:26:26.814296164 +0000
+@@ -343,6 +343,11 @@
+ @pytest.mark.postgres_pending
+ def test_cancel_race_single_request(postgres_db, postgres_session_factory) -> None:
+     session_row, owner, _extras = _owned_session(postgres_db, extra_instructors=1)
++    # A inscrição precisa existir ANTES da corrida: o teste verifica que ela é
++    # preservada (1 inscrição) e que só uma solicitação de cobertura é criada.
++    participant = _make_participant(postgres_db)
++    phase2_service.create_enrollment(postgres_db, participant, session_row.id)
++    postgres_db.commit()
+     owner_id = owner.id
+     session_id = session_row.id
+     barrier = Barrier(2)
+--- a/backend/tests/test_phase4.py	2026-10-28 12:26:26.812519915 +0000
++++ b/backend/tests/test_phase4.py	2026-10-28 12:26:26.814335379 +0000
+@@ -47,10 +47,14 @@
+     return user
+ 
+ 
+-def _uncovered_case(db):
++def _uncovered_case(db, participant_count: int = 1):
+     session, owner, _ = _owned_session(db)
+     participant = _participant(db)
+     enrollment = phase2_service.create_enrollment(db, participant, session.id)
++    # Inscrições adicionais só são possíveis com a sessão ainda aberta,
++    # ou seja, antes do cancelamento que a torna UNCOVERED.
++    for _ in range(participant_count - 1):
++        phase2_service.create_enrollment(db, _participant(db), session.id)
+     db.commit()
+     request = cover_service.cancel_session(db, owner, session.id)
+     request.invites.clear()
+@@ -259,12 +263,13 @@
+ 
+ @pytest.mark.postgres_pending
+ def test_apply_race_one_wins(postgres_db, postgres_session_factory) -> None:
+-    origin, _participant_one, _enrollment_one, _case_one = _uncovered_case(postgres_db)
+-    participant_two = _participant(postgres_db)
+-    phase2_service.create_enrollment(postgres_db, participant_two, origin.id)
+-    postgres_db.commit()
+-    cases = phase4_service.create_cases_for_uncovered_session(postgres_db, origin.id)
+-    postgres_db.commit()
++    origin, _participant_one, _enrollment_one, _case_one = _uncovered_case(
++        postgres_db, participant_count=2
++    )
++    cases = postgres_db.query(ReallocationCase).filter(
++        ReallocationCase.origin_session_id == origin.id
++    ).all()
++    assert len(cases) == 2
+     location = Location(name=f"Race {uuid.uuid4().hex[:6]}", is_active=True)
+     postgres_db.add(location)
+     postgres_db.flush()

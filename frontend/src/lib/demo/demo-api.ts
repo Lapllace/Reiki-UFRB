@@ -9,20 +9,26 @@
  */
 import type { ReikiApi } from "@/lib/api/contract";
 import { ApiError, fallbackMessage } from "@/lib/api/errors";
-import { addDays, parseISODate, toISODate, weekDays } from "@/lib/dates";
+import { addDays, parseISODate, startOfWeek, toISODate, weekDays } from "@/lib/dates";
 import { plural } from "@/lib/format";
 import type {
   AcceptCoverResult,
   AuditEvent,
+  AvailabilityEntry,
+  CoordinationAvailabilityEntry,
   CoverInvite,
   CoverRequest,
+  CycleManagement,
+  CyclePhase,
   Enrollment,
   InstructorSession,
+  InstructorSummary,
   Location,
   Reallocation,
   Role,
   RosterEntry,
   Session,
+  WeekAvailabilities,
   WeekSessions,
   WeeklyAvailability,
   WeeklyCycle,
@@ -292,7 +298,12 @@ function availabilityRecord(weekStart: string, instructorId: string): Availabili
   const current = store();
   const row = current.availability.get(weekStart);
   return (
-    row?.get(instructorId) ?? { status: "pending", submittedAt: null, selectedSlotIds: [] }
+    row?.get(instructorId) ?? {
+      status: "pending",
+      submittedAt: null,
+      selectedSlotIds: [],
+      entries: [],
+    }
   );
 }
 
@@ -301,40 +312,172 @@ function buildAvailability(weekStart: string): WeeklyAvailability {
   const start = parseISODate(weekStart);
   const record = availabilityRecord(weekStart, MY_INSTRUCTOR_ID);
   const canEdit = offset === OPEN_AVAILABILITY_WEEK_OFFSET;
-  const monday = store().mondayOfThisWeek;
+  const options = AVAILABILITY_TEMPLATES.map((template, index) => {
+    const startsAt = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate() + template.day,
+      template.hour,
+    );
+    return {
+      id: `opt-${weekStart}-${index}`,
+      startsAt: startsAt.toISOString(),
+      endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
+      locationId: template.loc,
+    };
+  });
+  const entries = record.entries.length
+    ? record.entries
+    : options
+        .filter((option) => record.selectedSlotIds.includes(option.id))
+        .map((option) => ({
+          id: option.id,
+          kind: "available" as const,
+          startsAt: option.startsAt,
+          endsAt: option.endsAt,
+          locationId: option.locationId,
+          note: null,
+        }));
   return {
     weekStart,
     weekEnd: toISODate(addDays(start, 6)),
+    entries,
     status: record.status,
-    deadline: canEdit
-      ? new Date(
-          monday.getFullYear(),
-          monday.getMonth(),
-          monday.getDate() + 9,
-          18,
-        ).toISOString()
-      : null,
     canEdit,
     lockedReason: canEdit
       ? null
       : offset < OPEN_AVAILABILITY_WEEK_OFFSET
         ? "O registro de disponibilidade desta semana já foi encerrado."
         : "O registro para esta semana ainda não foi aberto pela coordenação.",
-    options: AVAILABILITY_TEMPLATES.map((template, index) => {
-      const startsAt = new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        start.getDate() + template.day,
-        template.hour,
-      );
+    submittedAt: record.submittedAt,
+  };
+}
+
+function cyclePhaseFor(weekStart: string): CyclePhase {
+  const offset = weekOffset(weekStart);
+  if (offset < 0) return "closed";
+  if (offset === 0) return "in_progress";
+  if (offset === 1) return "enrollment_open";
+  return "collecting_availability";
+}
+
+function instructorAvailabilityEntries(
+  weekStart: string,
+  instructor: InstructorSummary,
+  record: AvailabilityRecord,
+  instructorIndex: number,
+): CoordinationAvailabilityEntry[] {
+  if (record.status !== "submitted") return [];
+
+  const start = parseISODate(weekStart);
+  const entries: CoordinationAvailabilityEntry[] = [];
+
+  if (record.entries.length > 0) {
+    for (const entry of record.entries) {
+      entries.push({
+        id: entry.id,
+        kind: entry.kind,
+        startsAt: entry.startsAt,
+        endsAt: entry.endsAt,
+        location: entry.locationId ? locationById(entry.locationId) : null,
+        note: entry.note ?? null,
+        isCurrent: true,
+        convertedSessionId: null,
+      });
+    }
+  } else {
+    const sessions = sessionsOfWeek(weekStart).filter(
+      (session) => session.instructorId === instructor.id,
+    );
+    if (sessions.length > 0) {
+      for (const session of sessions) {
+        entries.push({
+          id: `demo-converted-${weekStart}-${instructor.id}-${session.id}`,
+          kind: "available",
+          startsAt: session.startsAt,
+          endsAt: session.endsAt,
+          location: locationById(session.locationId),
+          note: null,
+          isCurrent: true,
+          convertedSessionId: session.id,
+        });
+      }
+    } else {
+      AVAILABILITY_TEMPLATES.filter(
+        (_, index) => (index + instructorIndex) % 3 === 0,
+      )
+        .slice(0, 2)
+        .forEach((template, index) => {
+          const startsAt = new Date(
+            start.getFullYear(),
+            start.getMonth(),
+            start.getDate() + template.day,
+            template.hour,
+          );
+          entries.push({
+            id: `demo-offer-${weekStart}-${instructor.id}-${index}`,
+            kind: "available",
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
+            location: locationById(template.loc),
+            note: null,
+            isCurrent: true,
+            convertedSessionId: null,
+          });
+        });
+    }
+  }
+
+  // A semana aberta para registro mostra também uma oferta histórica,
+  // deixando claro que ela não é vigente nem conversível.
+  if (
+    weekOffset(weekStart) === OPEN_AVAILABILITY_WEEK_OFFSET &&
+    instructorIndex === 1
+  ) {
+    const startsAt = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate(),
+      10,
+    );
+    entries.push({
+      id: `demo-history-${weekStart}-${instructor.id}`,
+      kind: "available",
+      startsAt: startsAt.toISOString(),
+      endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
+      location: locationById(DEMO_LOCATIONS[0].id),
+      note: "Oferta anterior substituída por um novo envio.",
+      isCurrent: false,
+      convertedSessionId: null,
+    });
+  }
+
+  return entries;
+}
+
+function cycleManagementFor(
+  weekStart: string,
+  cycle: { id: string; phase: CyclePhase },
+): CycleManagement {
+  return {
+    id: cycle.id,
+    weekStart,
+    status: cycle.phase,
+    instructors: ALL_INSTRUCTORS.map((instructor, index) => {
+      const record = availabilityRecord(weekStart, instructor.id);
       return {
-        id: `opt-${weekStart}-${index}`,
-        startsAt: startsAt.toISOString(),
-        endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
-        location: locationById(template.loc),
+        instructorId: instructor.id,
+        name: instructor.name,
+        status: record.status,
+        submittedAt: record.submittedAt,
+        sessionsOffered: instructorAvailabilityEntries(
+          weekStart,
+          instructor,
+          record,
+          index,
+        ).filter((entry) => entry.isCurrent && entry.kind === "available").length,
       };
     }),
-    selectedSlotIds: record.selectedSlotIds,
   };
 }
 
@@ -472,26 +615,28 @@ export const demoApi: ReikiApi = {
       if (!view.canEdit) {
         fail("conflict", view.lockedReason ?? "Registro indisponível para esta semana.", 409);
       }
-      if (!input.unavailable && input.slotIds.length === 0) {
-        fail("validation", "Selecione ao menos um horário ou declare indisponibilidade.", 422);
-      }
-      const validIds = new Set(view.options.map((option) => option.id));
-      if (input.slotIds.some((id) => !validIds.has(id))) {
-        fail("validation", "Um dos horários escolhidos não é válido para esta semana.", 422);
+      if (!input.unavailable && input.entries.length === 0) {
+        fail("validation", "Informe ao menos um horário ou declare indisponibilidade.", 422);
       }
       const current = store();
       const row = current.availability.get(input.weekStart) ?? new Map();
+      const entries: AvailabilityEntry[] = input.entries.map((entry, index) => ({
+        ...entry,
+        id: `demo-entry-${input.weekStart}-${index}`,
+        kind: "available",
+      }));
       row.set(MY_INSTRUCTOR_ID, {
-        status: input.unavailable ? "unavailable" : "published",
+        status: input.unavailable ? "unavailable" : "submitted",
         submittedAt: new Date().toISOString(),
-        selectedSlotIds: input.unavailable ? [] : input.slotIds,
+        selectedSlotIds: [],
+        entries: input.unavailable ? [] : entries,
       } satisfies AvailabilityRecord);
       current.availability.set(input.weekStart, row);
       pushEvent(
         "availability",
         input.unavailable
           ? `${DEMO_INSTRUCTORS.i1.name} declarou indisponibilidade para a semana de ${input.weekStart}.`
-          : `${DEMO_INSTRUCTORS.i1.name} publicou ${plural(input.slotIds.length, "horário")} para a semana de ${input.weekStart}.`,
+          : `${DEMO_INSTRUCTORS.i1.name} registrou ${plural(input.entries.length, "horário")} para a semana de ${input.weekStart}.`,
         DEMO_INSTRUCTORS.i1.name,
       );
       return buildAvailability(input.weekStart);
@@ -535,8 +680,9 @@ export const demoApi: ReikiApi = {
           message: "O ministrante cancelou. A solicitação de cobertura foi enviada aos ministrantes elegíveis.",
         },
       ];
+      const coverRequestId = `cr-${current.counters.event + 1}`;
       current.coverRequests.unshift({
-        id: `cr-${current.counters.event + 1}`,
+        id: coverRequestId,
         status: "open",
         sessionId,
         originalInstructor: DEMO_INSTRUCTORS.i1,
@@ -550,7 +696,7 @@ export const demoApi: ReikiApi = {
         DEMO_INSTRUCTORS.i1.name,
         sessionId,
       );
-      return toInstructorSession(record);
+      return { coverRequestId, status: "open", sessionId };
     },
     async listCoverInvites(signal) {
       await gate({ role: "instructor", signal });
@@ -636,6 +782,27 @@ export const demoApi: ReikiApi = {
   },
 
   coordination: {
+    async createCycle(input): Promise<CycleManagement> {
+      await gate({ role: "coordinator" });
+      assertValidWeek(input.weekStart);
+      const current = store();
+      const weekStart = toISODate(startOfWeek(parseISODate(input.weekStart)));
+      const existing = current.cycles.get(weekStart);
+      if (existing) return cycleManagementFor(weekStart, existing);
+
+      const cycle = {
+        id: `demo-cycle-${weekStart}`,
+        weekStart,
+        phase: cyclePhaseFor(weekStart),
+      };
+      current.cycles.set(weekStart, cycle);
+      pushEvent(
+        "cycle",
+        `Ciclo da semana de ${weekStart} criado explicitamente pela coordenação.`,
+        DEMO_USERS.coordinator.name,
+      );
+      return cycleManagementFor(weekStart, cycle);
+    },
     async getCycle(weekStart, signal): Promise<WeeklyCycle> {
       await gate({ role: "coordinator", signal });
       assertValidWeek(weekStart);
@@ -655,14 +822,7 @@ export const demoApi: ReikiApi = {
       return {
         weekStart,
         weekEnd: weekDays(weekStart)[6],
-        phase:
-          offset < 0
-            ? "closed"
-            : offset === 0
-              ? "in_progress"
-              : offset === 1
-                ? "enrollment_open"
-                : "collecting_availability",
+        phase: cyclePhaseFor(weekStart),
         availabilityDeadline: offset >= 2 ? at(offset - 1, 2, 18) : null,
         enrollmentOpensAt: at(offset - 1, 4, 8),
         totals: {
@@ -687,6 +847,37 @@ export const demoApi: ReikiApi = {
             sessionsOffered:
               record.selectedSlotIds.length ||
               records.filter((session) => session.instructorId === instructor.id).length,
+          };
+        }),
+      };
+    },
+    async listAvailabilities(weekStart, signal): Promise<WeekAvailabilities> {
+      await gate({ role: "coordinator", signal });
+      assertValidWeek(weekStart);
+      const normalized = toISODate(startOfWeek(parseISODate(weekStart)));
+      const cycle = store().cycles.get(normalized) ?? null;
+      return {
+        weekStart: normalized,
+        weekEnd: weekDays(normalized)[6],
+        cycleId: cycle?.id ?? null,
+        cyclePhase: cycle?.phase ?? null,
+        instructors: ALL_INSTRUCTORS.map((instructor, index) => {
+          const record = availabilityRecord(normalized, instructor.id);
+          return {
+            instructorId: instructor.id,
+            availabilityId: record.submittedAt
+              ? `demo-avail-${normalized}-${instructor.id}`
+              : null,
+            name: instructor.name,
+            status: record.status,
+            submittedAt: record.submittedAt,
+            note: null,
+            entries: instructorAvailabilityEntries(
+              normalized,
+              instructor,
+              record,
+              index,
+            ),
           };
         }),
       };
@@ -727,6 +918,20 @@ export const demoApi: ReikiApi = {
       if (record.status !== "pending") {
         fail("conflict", "Esta reorganização já foi tratada.", 409);
       }
+      if (input.alternative === "future_priority") {
+        record.status = "applied";
+        record.alternative = "future_priority";
+        record.priorityGrantedAt = new Date().toISOString();
+        pushEvent(
+          "reallocation",
+          "Prioridade futura registrada; sem garantia automática de vaga.",
+          DEMO_USERS.coordinator.name,
+        );
+        return toReallocation(record);
+      }
+      if (!input.targetSessionId) {
+        fail("validation", "Informe a sessão de destino.", 422);
+      }
       if (!record.candidateSessionIds.includes(input.targetSessionId)) {
         fail("validation", "A sessão escolhida não é uma opção válida.", 422);
       }
@@ -742,6 +947,7 @@ export const demoApi: ReikiApi = {
       }
       target.confirmedCount += record.participantCount;
       record.status = "applied";
+      record.alternative = "extra_session";
       record.appliedToId = target.id;
       pushEvent(
         "reallocation",
@@ -768,4 +974,3 @@ export const demoApi: ReikiApi = {
     },
   },
 };
-

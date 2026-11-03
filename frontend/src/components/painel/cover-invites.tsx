@@ -22,6 +22,7 @@ const statusMeta: Record<CoverInviteStatus, { label: string; tone: Tone }> = {
   pending: { label: "Aguardando sua resposta", tone: "honey" },
   accepted: { label: "Você assumiu a sessão", tone: "forest" },
   taken: { label: "Outro ministrante assumiu", tone: "sand" },
+  declined: { label: "Você recusou o convite", tone: "sand" },
   expired: { label: "Convite expirado", tone: "sand" },
   withdrawn: { label: "Convite retirado", tone: "sand" },
 };
@@ -81,9 +82,11 @@ export function CoverInvites() {
           onDismiss={() => setResult(null)}
         >
           {result.outcome === "accepted"
+            ? result.invite.session
             ? `${formatDayLong(new Date(result.invite.session.startsAt))}, ${formatTime(result.invite.session.startsAt)} agora está na sua lista de sessões.`
+            : "A sessão foi adicionada à sua lista de sessões."
             : result.outcome === "already_taken"
-              ? `${result.invite.acceptedBy?.name ?? "Outro ministrante"} teve o aceite registrado antes do seu. A sessão não ficou com você.`
+              ? "Outro ministrante teve o aceite registrado antes do seu. A sessão não ficou com você."
               : "O prazo para responder terminou e a sessão não pôde ser assumida."}
         </Alert>
       ) : null}
@@ -138,10 +141,14 @@ export function CoverInvites() {
       >
         {target ? (
           <div className="rounded-2xl bg-sand-50 p-4 text-ink-800">
-            <p className="capitalize-first font-semibold">
-              {formatDayLong(new Date(target.session.startsAt))}, {formatTimeRange(target.session.startsAt, target.session.endsAt)}
-            </p>
-            <p className="mt-1 text-sm">{target.session.location.name}</p>
+            {target.session ? (
+              <>
+                <p className="capitalize-first font-semibold">
+                  {formatDayLong(new Date(target.session.startsAt))}, {formatTimeRange(target.session.startsAt, target.session.endsAt)}
+                </p>
+                <p className="mt-1 text-sm">{target.session.location.name}</p>
+              </>
+            ) : <p className="text-sm">Sessão {target.sessionId ?? "não informada"}</p>}
           </div>
         ) : null}
         <p className="text-sm text-ink-600">
@@ -157,6 +164,16 @@ function InviteCard({ invite, onAccept }: { invite: CoverInvite; onAccept?: () =
   const { session } = invite;
   const meta = statusMeta[invite.status];
   const pending = invite.status === "pending";
+  if (!session) {
+    return (
+      <article className="rounded-(--radius-card) border border-line bg-paper p-5 shadow-soft sm:p-6">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-ink-700">Sessão do convite: {invite.sessionId ?? "não informada"}</p>
+          <Badge tone={meta.tone}>{meta.label}</Badge>
+        </div>
+      </article>
+    );
+  }
   return (
     <article
       className={cn(
@@ -191,7 +208,7 @@ function InviteCard({ invite, onAccept }: { invite: CoverInvite; onAccept?: () =
       ) : null}
       <p className="mt-4 text-xs text-ink-500">
         Convite enviado em {formatDateTime(invite.createdAt)}
-        {invite.status === "taken" && invite.acceptedBy ? ` · assumida por ${invite.acceptedBy.name}` : ""}
+        {invite.status === "taken" ? " · assumida por outro ministrante" : ""}
       </p>
       {pending && onAccept ? (
         <div className="mt-5">
