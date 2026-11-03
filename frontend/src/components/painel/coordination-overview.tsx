@@ -26,6 +26,7 @@ import { useWeekSelection, WeekSwitcher } from "./week-switcher";
 
 const phases: { id: CyclePhase; label: string }[] = [
   { id: "collecting_availability", label: "Disponibilidades" },
+  { id: "enrollment_pending", label: "Agenda preparada, aguardando abertura das inscrições" },
   { id: "enrollment_open", label: "Inscrições abertas" },
   { id: "in_progress", label: "Semana em andamento" },
   { id: "closed", label: "Encerrada" },
@@ -38,16 +39,15 @@ const availabilityMeta: Record<AvailabilityStatus, { label: string; tone: Tone }
 };
 
 function phaseIndex(phase: CyclePhase): number {
-  if (phase === "enrollment_pending") return 1;
   return phases.findIndex((item) => item.id === phase);
 }
 
-function PhaseTracker({ cycle }: { cycle: WeeklyCycle }) {
+export function PhaseTracker({ cycle }: { cycle: WeeklyCycle }) {
   const active = phaseIndex(cycle.phase);
   return (
     <Card>
       <h2 className="font-display text-xl text-forest-900">Andamento do ciclo</h2>
-      <ol className="mt-5 grid gap-4 sm:grid-cols-4">
+      <ol className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {phases.map((phase, index) => {
           const done = index < active;
           const current = index === active;

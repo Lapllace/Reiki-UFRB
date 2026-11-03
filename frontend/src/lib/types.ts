@@ -329,6 +329,13 @@ export interface WeekSessions {
   weekStart: string;
   weekEnd: string;
   sessions: Session[];
-  /** `false` quando a semana ainda não foi publicada pela coordenação. */
+  /**
+   * Visibilidade pública da agenda.
+   *  - `false`: ciclo inexistente, `collecting_availability` ou `enrollment_pending`;
+   *  - `true`: `enrollment_open`, `in_progress` ou `closed`.
+   *
+   * Não determina isoladamente se novas inscrições estão autorizadas. A decisão
+   * definitiva de aceitar uma inscrição pertence ao servidor.
+   */
   published: boolean;
 }
