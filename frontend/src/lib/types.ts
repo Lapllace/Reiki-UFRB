@@ -237,6 +237,61 @@ export interface InstructorAvailabilityRow {
   sessionsOffered: number;
 }
 
+export interface CreateCycleInput {
+  weekStart: string;
+}
+
+export interface CycleInstructorStatus {
+  instructorId: string;
+  name: string;
+  status: AvailabilityStatus;
+  submittedAt?: string | null;
+  sessionsOffered: number;
+}
+
+/** Resposta de `POST /coordination/cycles` (criação idempotente). */
+export interface CycleManagement {
+  id: string;
+  weekStart: string;
+  status: CyclePhase;
+  instructors: CycleInstructorStatus[];
+}
+
+/** Oferta de horário como a coordenação a enxerga. */
+export interface CoordinationAvailabilityEntry {
+  id: string;
+  kind: AvailabilityEntryKind;
+  startsAt: string;
+  endsAt: string;
+  location: Location | null;
+  note?: string | null;
+  /** `false` quando a oferta foi substituída por um reenvio e é apenas histórico. */
+  isCurrent: boolean;
+  /** Sessão já criada a partir desta oferta, quando houver. */
+  convertedSessionId?: string | null;
+}
+
+export interface CoordinationInstructorAvailability {
+  instructorId: string;
+  availabilityId?: string | null;
+  name: string;
+  status: AvailabilityStatus;
+  submittedAt?: string | null;
+  note?: string | null;
+  entries: CoordinationAvailabilityEntry[];
+}
+
+/** Resposta de `GET /coordination/cycles/{weekStart}/availabilities`. */
+export interface WeekAvailabilities {
+  weekStart: string;
+  weekEnd: string;
+  /** `null` quando o ciclo da semana ainda não foi criado. */
+  cycleId: string | null;
+  /** `null` quando o ciclo da semana ainda não foi criado. */
+  cyclePhase: CyclePhase | null;
+  instructors: CoordinationInstructorAvailability[];
+}
+
 export interface WeeklyCycle {
   weekStart: string;
   weekEnd: string;

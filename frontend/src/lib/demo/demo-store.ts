@@ -18,6 +18,7 @@ import type {
   Reallocation,
   AvailabilityStatus,
   AvailabilityEntry,
+  CyclePhase,
   SessionNotice,
   SessionStatus,
   User,
@@ -138,6 +139,12 @@ export interface AvailabilityRecord {
   entries: AvailabilityEntry[];
 }
 
+export interface DemoCycleRecord {
+  id: string;
+  weekStart: string;
+  phase: CyclePhase;
+}
+
 export interface DemoState {
   now: Date;
   mondayOfThisWeek: Date;
@@ -150,6 +157,8 @@ export interface DemoState {
   events: AuditEvent[];
   /** weekStart -> instructorId -> registro */
   availability: Map<string, Map<string, AvailabilityRecord>>;
+  /** weekStart -> ciclo criado explicitamente pela coordenação */
+  cycles: Map<string, DemoCycleRecord>;
   counters: { enrollment: number; event: number };
 }
 
@@ -608,6 +617,21 @@ export function createDemoState(): DemoState {
     },
   });
 
+  // Semanas passadas e atuais já têm ciclo; a semana aberta para registro
+  // (offset 2) ainda não tem, permitindo exercitar a criação explícita.
+  const cycles = new Map<string, DemoCycleRecord>();
+  const setCycle = (week: number, phase: CyclePhase) => {
+    const weekStart = toISODate(addDays(monday, week * 7));
+    cycles.set(weekStart, {
+      id: `demo-cycle-${weekStart}`,
+      weekStart,
+      phase,
+    });
+  };
+  setCycle(-1, "closed");
+  setCycle(0, "in_progress");
+  setCycle(1, "enrollment_open");
+
   return {
     now,
     mondayOfThisWeek: monday,
@@ -619,6 +643,7 @@ export function createDemoState(): DemoState {
     reallocations,
     events,
     availability,
+    cycles,
     counters: { enrollment: 100, event: 100 },
   };
 }

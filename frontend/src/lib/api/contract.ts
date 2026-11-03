@@ -5,6 +5,8 @@ import type {
   AuditEvent,
   CoverInvite,
   CoverRequest,
+  CreateCycleInput,
+  CycleManagement,
   Enrollment,
   EnrollmentResult,
   CancelSessionResult,
@@ -15,6 +17,7 @@ import type {
   Reallocation,
   RosterEntry,
   User,
+  WeekAvailabilities,
   WeekSessions,
   WeeklyAvailability,
   WeeklyCycle,
@@ -63,7 +66,11 @@ export interface ReikiApi {
     acceptCover(inviteId: string): Promise<AcceptCoverResult>;
   };
   coordination: {
+    /** Cria o ciclo da semana de forma explícita e idempotente. */
+    createCycle(input: CreateCycleInput): Promise<CycleManagement>;
     getCycle(weekStart: string, signal?: AbortSignal): Promise<WeeklyCycle>;
+    /** Disponibilidades administrativas da semana; ciclo ainda pode não existir. */
+    listAvailabilities(weekStart: string, signal?: AbortSignal): Promise<WeekAvailabilities>;
     listSessions(weekStart: string, signal?: AbortSignal): Promise<WeekSessions>;
     roster(sessionId: string, signal?: AbortSignal): Promise<RosterEntry[]>;
     listCoverRequests(signal?: AbortSignal): Promise<CoverRequest[]>;

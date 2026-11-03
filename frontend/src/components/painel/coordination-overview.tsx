@@ -2,53 +2,29 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import {
-  ArrowRight,
-  CalendarCheck2,
-  CalendarX2,
-  Check,
-  CircleDashed,
-  UsersRound,
-} from "lucide-react";
+import { ArrowRight, Check, UsersRound } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
-import { Badge, type Tone } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/section";
 import { ErrorState, LoadingBlock } from "@/components/ui/states";
 import { api } from "@/lib/api";
 
 import { cn } from "@/lib/cn";
+import { cyclePhaseIndex, cyclePhases } from "@/lib/cycle-phases";
 import { formatDateTime } from "@/lib/dates";
 import { plural } from "@/lib/format";
 import { useAccountResource } from "@/lib/hooks/use-account-resource";
-import type { AvailabilityStatus, CyclePhase, WeeklyCycle } from "@/lib/types";
+import type { WeeklyCycle } from "@/lib/types";
+import { CoordinationAvailabilities } from "./coordination-availabilities";
 import { useWeekSelection, WeekSwitcher } from "./week-switcher";
 
-const phases: { id: CyclePhase; label: string }[] = [
-  { id: "collecting_availability", label: "Disponibilidades" },
-  { id: "enrollment_pending", label: "Agenda preparada, aguardando abertura das inscrições" },
-  { id: "enrollment_open", label: "Inscrições abertas" },
-  { id: "in_progress", label: "Semana em andamento" },
-  { id: "closed", label: "Encerrada" },
-];
-
-const availabilityMeta: Record<AvailabilityStatus, { label: string; tone: Tone }> = {
-  submitted: { label: "Registrada", tone: "forest" },
-  pending: { label: "Pendente", tone: "honey" },
-  unavailable: { label: "Indisponível", tone: "sage" },
-};
-
-function phaseIndex(phase: CyclePhase): number {
-  return phases.findIndex((item) => item.id === phase);
-}
-
 export function PhaseTracker({ cycle }: { cycle: WeeklyCycle }) {
-  const active = phaseIndex(cycle.phase);
+  const active = cyclePhaseIndex(cycle.phase);
   return (
     <Card>
       <h2 className="font-display text-xl text-forest-900">Andamento do ciclo</h2>
       <ol className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {phases.map((phase, index) => {
+        {cyclePhases.map((phase, index) => {
           const done = index < active;
           const current = index === active;
           return (
@@ -90,13 +66,36 @@ export function CoordinationOverview() {
   const [selected, setSelected] = useState<string | null>(null);
   const { current, week } = useWeekSelection(selected);
 
-  const { data, error, loading, reload } = useAccountResource(
+  const {
+    data,
+    error,
+    loading,
+    reload,
+    reloadAsync: reloadCycleAsync,
+  } = useAccountResource(
     week ? `cycle:${week}` : null,
     (signal) => api.coordination.getCycle(week as string, signal),
   );
 
-  const registered = data?.instructors.filter((item) => item.status !== "pending").length ?? 0;
-  const total = data?.instructors.length ?? 0;
+  const {
+    data: availabilities,
+    error: availabilitiesError,
+    loading: availabilitiesLoading,
+    refreshing: availabilitiesRefreshing,
+    reload: reloadAvailabilities,
+    reloadAsync: reloadAvailabilitiesAsync,
+  } = useAccountResource(
+    week ? `coord-availabilities:${week}` : null,
+    (signal) => api.coordination.listAvailabilities(week as string, signal),
+  );
+
+  const reloadAll = async () => {
+    const [cycleReloaded, availabilitiesReloaded] = await Promise.all([
+      reloadCycleAsync(),
+      reloadAvailabilitiesAsync(),
+    ]);
+    return cycleReloaded && availabilitiesReloaded;
+  };
 
   const stats = data
     ? [
@@ -185,66 +184,18 @@ export function CoordinationOverview() {
             ))}
           </section>
 
-          <section aria-labelledby="ministrantes" className="space-y-4">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <h2 id="ministrantes" className="font-display text-2xl text-forest-900">
-                Disponibilidade dos ministrantes
-              </h2>
-              <p className="text-sm font-semibold text-ink-700">
-                {registered} de {total} registraram
-              </p>
-            </div>
-            <div
-              role="progressbar"
-              aria-label="Ministrantes que registraram disponibilidade"
-              aria-valuemin={0}
-              aria-valuemax={total}
-              aria-valuenow={registered}
-              className="h-2 overflow-hidden rounded-full bg-sand-200"
-            >
-              <div
-                className="h-full rounded-full bg-sage-500 transition-[width] duration-500"
-                style={{ width: total ? `${(registered / total) * 100}%` : "0%" }}
-              />
-            </div>
-            {data.instructors.length === 0 ? (
-              <p className="text-ink-600">Nenhum ministrante cadastrado para este ciclo.</p>
-            ) : (
-              <ul className="divide-y divide-line overflow-hidden rounded-(--radius-card) border border-line bg-paper shadow-soft">
-                {data.instructors.map((row) => {
-                  const meta = availabilityMeta[row.status];
-                  return (
-                    <li
-                      key={row.instructor.id}
-                      className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="grid size-10 place-items-center rounded-full bg-sage-100 text-forest-800">
-                          {row.status === "pending" ? (
-                            <CircleDashed className="size-5" aria-hidden />
-                          ) : row.status === "unavailable" ? (
-                            <CalendarX2 className="size-5" aria-hidden />
-                          ) : (
-                            <CalendarCheck2 className="size-5" aria-hidden />
-                          )}
-                        </span>
-                        <div>
-                          <p className="font-semibold text-forest-900">{row.instructor.name}</p>
-                          <p className="text-sm text-ink-600">
-                            {row.submittedAt
-                              ? `Registrou em ${formatDateTime(row.submittedAt)}`
-                              : "Ainda não registrou"}
-                            {row.status === "submitted" ? ` · ${plural(row.sessionsOffered, "horário")}` : ""}
-                          </p>
-                        </div>
-                      </div>
-                      <Badge tone={meta.tone}>{meta.label}</Badge>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+          {week ? (
+            <CoordinationAvailabilities
+              key={week}
+              week={week}
+              data={availabilities}
+              error={availabilitiesError}
+              loading={availabilitiesLoading}
+              refreshing={availabilitiesRefreshing}
+              onRetry={reloadAvailabilities}
+              onRefresh={reloadAll}
+            />
+          ) : null}
 
           <p className="flex items-center gap-2 text-sm text-ink-600">
             <UsersRound className="size-4" aria-hidden />

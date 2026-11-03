@@ -8,6 +8,7 @@ import type {
   AuditEvent,
   CoverInvite,
   CoverRequest,
+  CycleManagement,
   Enrollment,
   EnrollmentResult,
   CancelSessionResult,
@@ -16,6 +17,7 @@ import type {
   Reallocation,
   RosterEntry,
   User,
+  WeekAvailabilities,
   WeekSessions,
   WeeklyAvailability,
   WeeklyCycle,
@@ -113,8 +115,17 @@ export function createRealApi(): ReikiApi {
       },
     },
     coordination: {
+      createCycle: (input) =>
+        apiRequest<CycleManagement>(endpoints.coordination.cycles, {
+          method: "POST",
+          body: { weekStart: input.weekStart },
+        }),
       getCycle: (weekStart, signal) =>
         apiRequest<WeeklyCycle>(endpoints.coordination.cycle(weekStart), { signal }),
+      listAvailabilities: (weekStart, signal) =>
+        apiRequest<WeekAvailabilities>(endpoints.coordination.availabilities(weekStart), {
+          signal,
+        }),
       listSessions: (weekStart, signal) =>
         apiRequest<WeekSessions>(endpoints.coordination.sessions, {
           query: { weekStart },

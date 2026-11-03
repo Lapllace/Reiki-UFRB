@@ -9,21 +9,26 @@
  */
 import type { ReikiApi } from "@/lib/api/contract";
 import { ApiError, fallbackMessage } from "@/lib/api/errors";
-import { addDays, parseISODate, toISODate, weekDays } from "@/lib/dates";
+import { addDays, parseISODate, startOfWeek, toISODate, weekDays } from "@/lib/dates";
 import { plural } from "@/lib/format";
 import type {
   AcceptCoverResult,
   AuditEvent,
   AvailabilityEntry,
+  CoordinationAvailabilityEntry,
   CoverInvite,
   CoverRequest,
+  CycleManagement,
+  CyclePhase,
   Enrollment,
   InstructorSession,
+  InstructorSummary,
   Location,
   Reallocation,
   Role,
   RosterEntry,
   Session,
+  WeekAvailabilities,
   WeekSessions,
   WeeklyAvailability,
   WeeklyCycle,
@@ -348,6 +353,134 @@ function buildAvailability(weekStart: string): WeeklyAvailability {
   };
 }
 
+function cyclePhaseFor(weekStart: string): CyclePhase {
+  const offset = weekOffset(weekStart);
+  if (offset < 0) return "closed";
+  if (offset === 0) return "in_progress";
+  if (offset === 1) return "enrollment_open";
+  return "collecting_availability";
+}
+
+function instructorAvailabilityEntries(
+  weekStart: string,
+  instructor: InstructorSummary,
+  record: AvailabilityRecord,
+  instructorIndex: number,
+): CoordinationAvailabilityEntry[] {
+  if (record.status !== "submitted") return [];
+
+  const start = parseISODate(weekStart);
+  const entries: CoordinationAvailabilityEntry[] = [];
+
+  if (record.entries.length > 0) {
+    for (const entry of record.entries) {
+      entries.push({
+        id: entry.id,
+        kind: entry.kind,
+        startsAt: entry.startsAt,
+        endsAt: entry.endsAt,
+        location: entry.locationId ? locationById(entry.locationId) : null,
+        note: entry.note ?? null,
+        isCurrent: true,
+        convertedSessionId: null,
+      });
+    }
+  } else {
+    const sessions = sessionsOfWeek(weekStart).filter(
+      (session) => session.instructorId === instructor.id,
+    );
+    if (sessions.length > 0) {
+      for (const session of sessions) {
+        entries.push({
+          id: `demo-converted-${weekStart}-${instructor.id}-${session.id}`,
+          kind: "available",
+          startsAt: session.startsAt,
+          endsAt: session.endsAt,
+          location: locationById(session.locationId),
+          note: null,
+          isCurrent: true,
+          convertedSessionId: session.id,
+        });
+      }
+    } else {
+      AVAILABILITY_TEMPLATES.filter(
+        (_, index) => (index + instructorIndex) % 3 === 0,
+      )
+        .slice(0, 2)
+        .forEach((template, index) => {
+          const startsAt = new Date(
+            start.getFullYear(),
+            start.getMonth(),
+            start.getDate() + template.day,
+            template.hour,
+          );
+          entries.push({
+            id: `demo-offer-${weekStart}-${instructor.id}-${index}`,
+            kind: "available",
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
+            location: locationById(template.loc),
+            note: null,
+            isCurrent: true,
+            convertedSessionId: null,
+          });
+        });
+    }
+  }
+
+  // A semana aberta para registro mostra também uma oferta histórica,
+  // deixando claro que ela não é vigente nem conversível.
+  if (
+    weekOffset(weekStart) === OPEN_AVAILABILITY_WEEK_OFFSET &&
+    instructorIndex === 1
+  ) {
+    const startsAt = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate(),
+      10,
+    );
+    entries.push({
+      id: `demo-history-${weekStart}-${instructor.id}`,
+      kind: "available",
+      startsAt: startsAt.toISOString(),
+      endsAt: new Date(startsAt.getTime() + HOUR).toISOString(),
+      location: locationById(DEMO_LOCATIONS[0].id),
+      note: "Oferta anterior substituída por um novo envio.",
+      isCurrent: false,
+      convertedSessionId: null,
+    });
+  }
+
+  return entries;
+}
+
+function cycleManagementFor(
+  weekStart: string,
+  cycle: { id: string; phase: CyclePhase },
+): CycleManagement {
+  return {
+    id: cycle.id,
+    weekStart,
+    status: cycle.phase,
+    instructors: ALL_INSTRUCTORS.map((instructor, index) => {
+      const record = availabilityRecord(weekStart, instructor.id);
+      return {
+        instructorId: instructor.id,
+        name: instructor.name,
+        status: record.status,
+        submittedAt: record.submittedAt,
+        sessionsOffered: instructorAvailabilityEntries(
+          weekStart,
+          instructor,
+          record,
+          index,
+        ).filter((entry) => entry.isCurrent && entry.kind === "available").length,
+      };
+    }),
+  };
+}
+
 function assertValidWeek(weekStart: string) {
   if (Number.isNaN(parseISODate(weekStart).getTime())) {
     fail("validation", "Semana inválida.", 422);
@@ -649,6 +782,27 @@ export const demoApi: ReikiApi = {
   },
 
   coordination: {
+    async createCycle(input): Promise<CycleManagement> {
+      await gate({ role: "coordinator" });
+      assertValidWeek(input.weekStart);
+      const current = store();
+      const weekStart = toISODate(startOfWeek(parseISODate(input.weekStart)));
+      const existing = current.cycles.get(weekStart);
+      if (existing) return cycleManagementFor(weekStart, existing);
+
+      const cycle = {
+        id: `demo-cycle-${weekStart}`,
+        weekStart,
+        phase: cyclePhaseFor(weekStart),
+      };
+      current.cycles.set(weekStart, cycle);
+      pushEvent(
+        "cycle",
+        `Ciclo da semana de ${weekStart} criado explicitamente pela coordenação.`,
+        DEMO_USERS.coordinator.name,
+      );
+      return cycleManagementFor(weekStart, cycle);
+    },
     async getCycle(weekStart, signal): Promise<WeeklyCycle> {
       await gate({ role: "coordinator", signal });
       assertValidWeek(weekStart);
@@ -668,14 +822,7 @@ export const demoApi: ReikiApi = {
       return {
         weekStart,
         weekEnd: weekDays(weekStart)[6],
-        phase:
-          offset < 0
-            ? "closed"
-            : offset === 0
-              ? "in_progress"
-              : offset === 1
-                ? "enrollment_open"
-                : "collecting_availability",
+        phase: cyclePhaseFor(weekStart),
         availabilityDeadline: offset >= 2 ? at(offset - 1, 2, 18) : null,
         enrollmentOpensAt: at(offset - 1, 4, 8),
         totals: {
@@ -700,6 +847,37 @@ export const demoApi: ReikiApi = {
             sessionsOffered:
               record.selectedSlotIds.length ||
               records.filter((session) => session.instructorId === instructor.id).length,
+          };
+        }),
+      };
+    },
+    async listAvailabilities(weekStart, signal): Promise<WeekAvailabilities> {
+      await gate({ role: "coordinator", signal });
+      assertValidWeek(weekStart);
+      const normalized = toISODate(startOfWeek(parseISODate(weekStart)));
+      const cycle = store().cycles.get(normalized) ?? null;
+      return {
+        weekStart: normalized,
+        weekEnd: weekDays(normalized)[6],
+        cycleId: cycle?.id ?? null,
+        cyclePhase: cycle?.phase ?? null,
+        instructors: ALL_INSTRUCTORS.map((instructor, index) => {
+          const record = availabilityRecord(normalized, instructor.id);
+          return {
+            instructorId: instructor.id,
+            availabilityId: record.submittedAt
+              ? `demo-avail-${normalized}-${instructor.id}`
+              : null,
+            name: instructor.name,
+            status: record.status,
+            submittedAt: record.submittedAt,
+            note: null,
+            entries: instructorAvailabilityEntries(
+              normalized,
+              instructor,
+              record,
+              index,
+            ),
           };
         }),
       };

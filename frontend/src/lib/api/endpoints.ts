@@ -30,8 +30,11 @@ export const endpoints = {
       `/instructor/cover-invites/${encodeURIComponent(inviteId)}/accept`,
   },
   coordination: {
+    cycles: "/coordination/cycles",
     cycle: (weekStart: string) =>
       `/coordination/cycles/${encodeURIComponent(weekStart)}`,
+    availabilities: (weekStart: string) =>
+      `/coordination/cycles/${encodeURIComponent(weekStart)}/availabilities`,
     sessions: "/coordination/sessions",
     roster: (sessionId: string) =>
       `/coordination/sessions/${encodeURIComponent(sessionId)}/roster`,

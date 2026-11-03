@@ -10,6 +10,13 @@ interface Settled<T> {
   error?: ApiError;
 }
 
+/** Recarga aguardando o desfecho da consulta que ela disparou. */
+interface Waiter {
+  key: string;
+  token: string;
+  resolve: (ok: boolean) => void;
+}
+
 export interface Resource<T> {
   data: T | undefined;
   error: ApiError | undefined;
@@ -17,7 +24,15 @@ export interface Resource<T> {
   loading: boolean;
   /** Recarregando em segundo plano com dados anteriores ainda exibidos. */
   refreshing: boolean;
+  /** Dispara uma recarga em segundo plano, sem aguardar o resultado. */
   reload: () => void;
+  /**
+   * Dispara uma recarga e resolve quando ela termina: `true` se os novos dados
+   * chegaram, `false` se a consulta falhou, foi substituída por outra recarga ou
+   * pela troca/desativação da chave. Permite que fluxos que dependem do sucesso
+   * da atualização (ex.: recuperação após criar um ciclo) reajam corretamente.
+   */
+  reloadAsync: () => Promise<boolean>;
 }
 
 interface Options {
@@ -41,12 +56,23 @@ export function useResource<T>(
   const [nonce, setNonce] = useState(0);
   const [settled, setSettled] = useState<Settled<T> | null>(null);
   const fetcherRef = useRef(fetcher);
+  const nonceRef = useRef(0);
+  const waitersRef = useRef<Waiter[]>([]);
 
   useEffect(() => {
     fetcherRef.current = fetcher;
   });
 
   const token = key === null ? null : `${key}#${nonce}`;
+
+  const resolveWaiters = useCallback((waiterToken: string, ok: boolean) => {
+    if (waitersRef.current.length === 0) return;
+    const pending = waitersRef.current;
+    waitersRef.current = pending.filter((waiter) => waiter.token !== waiterToken);
+    for (const waiter of pending) {
+      if (waiter.token === waiterToken) waiter.resolve(ok);
+    }
+  }, []);
 
   useEffect(() => {
     if (key === null || token === null) return;
@@ -55,24 +81,75 @@ export function useResource<T>(
       .current(controller.signal)
       .then(
         (data) => {
-          if (!controller.signal.aborted) setSettled({ key, token, data });
+          if (controller.signal.aborted) return;
+          setSettled({ key, token, data });
+          resolveWaiters(token, true);
         },
         (error: unknown) => {
-          if (!controller.signal.aborted) setSettled({ key, token, error: toApiError(error) });
+          if (controller.signal.aborted) return;
+          setSettled({ key, token, error: toApiError(error) });
+          resolveWaiters(token, false);
         },
       );
-    return () => controller.abort();
-  }, [key, token]);
+    return () => {
+      controller.abort();
+      resolveWaiters(token, false);
+    };
+  }, [key, token, resolveWaiters]);
+
+  // Recargas pendentes de outra chave não têm mais como ser concluídas.
+  useEffect(() => {
+    const pending = waitersRef.current;
+    if (pending.length === 0) return;
+    const kept: Waiter[] = [];
+    for (const waiter of pending) {
+      if (waiter.key === key) kept.push(waiter);
+      else waiter.resolve(false);
+    }
+    waitersRef.current = kept;
+  }, [key]);
+
+  // Desmontou: nenhuma recarga pendente ficará sem resposta.
+  useEffect(() => {
+    return () => {
+      const pending = waitersRef.current;
+      waitersRef.current = [];
+      for (const waiter of pending) waiter.resolve(false);
+    };
+  }, []);
+
+  const bumpNonce = useCallback(() => {
+    nonceRef.current += 1;
+    setNonce(nonceRef.current);
+  }, []);
+
+  const reloadAsync = useCallback((): Promise<boolean> => {
+    if (key === null) return Promise.resolve(false);
+    // Uma nova recarga substitui as anteriores desta mesma consulta.
+    const previous = waitersRef.current;
+    waitersRef.current = [];
+    for (const waiter of previous) waiter.resolve(false);
+
+    nonceRef.current += 1;
+    const nextToken = `${key}#${nonceRef.current}`;
+    const result = new Promise<boolean>((resolve) => {
+      waitersRef.current.push({ key, token: nextToken, resolve });
+    });
+    setNonce(nonceRef.current);
+    return result;
+  }, [key]);
+
+  const reload = useCallback(() => {
+    void reloadAsync();
+  }, [reloadAsync]);
 
   useEffect(() => {
     if (!refreshInterval || key === null) return;
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible") setNonce((value) => value + 1);
+      if (document.visibilityState === "visible") bumpNonce();
     }, refreshInterval);
     return () => clearInterval(interval);
-  }, [refreshInterval, key]);
-
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
+  }, [refreshInterval, key, bumpNonce]);
 
   const sameKey = settled !== null && settled.key === key;
   const upToDate = settled !== null && settled.token === token;
@@ -85,5 +162,6 @@ export function useResource<T>(
     loading: key !== null && !upToDate && !hasData,
     refreshing: key !== null && !upToDate && hasData,
     reload,
+    reloadAsync,
   };
 }
